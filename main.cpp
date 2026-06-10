@@ -7,10 +7,17 @@
 #include <concepts>
 #include <algorithm>
 
+#include "include/magic_enum-master/include/magic_enum/magic_enum.hpp"
+
+#include <iomanip>
+
 #ifdef _WIN32
 #include <Windows.h>
 #endif
 
+void help_command();
+
+// First level of protection against incorrect input(Symbol existence checker).
 void safe_input(std::string& expr) {
     bool correct_expr;
     do {
@@ -29,7 +36,7 @@ void safe_input(std::string& expr) {
 
         correct_expr = true;
         if (!std::all_of(expr.begin(), expr.end(), [](char c) {
-            return std::string_view("0123456789+-*/.,()%^").find(c) != std::string_view::npos;
+            return std::string_view("0123456789+-*/.,()%^ ").find(c) != std::string_view::npos;
             })) {
             correct_expr = false;
             std::cout << "Error: invalid math expression. Try again." << std::endl;
@@ -38,6 +45,7 @@ void safe_input(std::string& expr) {
     } while (!correct_expr);
 }
 
+// second level of protection against incorrect input(Syntax checker).
 template<typename T>
 concept mathexpr = std::same_as<T, std::string> || std::same_as<T, std::vector<std::string>>;
 bool math_expression_validation(const mathexpr auto& expr) {
@@ -76,10 +84,8 @@ bool math_expression_validation(const mathexpr auto& expr) {
 
                 auto next = it;
                 next++;
-                if (next != expr.end()) {
-                    if (std::string_view("+-*/) ").find(*next) == std::string_view::npos) {
-                        return false;
-                    }
+                if (next != expr.end() && std::string_view("+-*/) ").find(*next) == std::string_view::npos) {
+                    return false;
                 }
             }
         }
@@ -98,6 +104,119 @@ bool math_expression_validation(const mathexpr auto& expr) {
     }
 
     return true;
+}
+
+enum class TypeOfToken {
+    Default,
+    Number,
+    Plus,
+    Minus,
+    MultiplicationSign,
+    DivisionSign,
+    NegativeSign,
+    LeftParenthesis,
+    RightParenthesis,
+    Power,
+    Percent
+};
+
+struct Token {
+    int index = 0;
+    TypeOfToken type = TypeOfToken::Default;
+    std::string value;
+
+    void setter(int num, TypeOfToken current_type, auto iterator_value) {
+        type = current_type;
+        index = num;
+        value = iterator_value;
+    }
+
+    void print() const {
+        std::cout << std::left;
+        std::cout
+            << " [index: "  << std::setw(13) << std::string(std::to_string(index) + ";")
+            << " type: "    << std::setw(23) << (std::string(magic_enum::enum_name(type)) + ";")
+            << " value: " << std::setw(1) << value
+            << " ] "        << std::endl;
+    }
+};
+
+std::vector<Token> lexer(std::string_view expr) {
+    std::vector<Token> tokens;
+    int i = 0;
+    for (auto it = expr.begin(); it != expr.end(); it++) {
+        if (*it == ' ') continue;
+
+        if (std::string_view("+-*/()%^").find(*it) != std::string_view::npos) {
+            Token a_operator;
+            switch (*it) {
+                case '+':
+                    a_operator.setter(i, TypeOfToken::Plus, *it);
+                    tokens.push_back(a_operator);
+                    break;
+                case '-':
+                    if (it == expr.begin() || *(std::prev(it)) == '(') {
+                        a_operator.setter(i, TypeOfToken::NegativeSign, '~');
+                        tokens.push_back(a_operator);
+                    }
+                    else {
+                        a_operator.setter(i, TypeOfToken::Minus, *it);
+                        tokens.push_back(a_operator);
+                    }
+                    break;
+                case '*':
+                    a_operator.setter(i, TypeOfToken::MultiplicationSign, *it);
+                    tokens.push_back(a_operator);
+                    break;
+                case '/':
+                    a_operator.setter(i, TypeOfToken::DivisionSign, *it);
+                    tokens.push_back(a_operator);
+                    break;
+                case '(':
+                    a_operator.setter(i, TypeOfToken::LeftParenthesis, *it);
+                    tokens.push_back(a_operator);
+                    break;
+                case ')':
+                    a_operator.setter(i, TypeOfToken::RightParenthesis, *it);
+                    tokens.push_back(a_operator);
+                    break;
+                case '%':
+                    a_operator.setter(i, TypeOfToken::Percent, *it);
+                    tokens.push_back(a_operator);
+                    break;
+                case '^':
+                    a_operator.setter(i, TypeOfToken::Power, *it);
+                    tokens.push_back(a_operator);
+                    break;
+                default:
+                    continue;
+            }
+        } 
+        else {
+            Token number;
+            bool has_point = false;
+            while (it != expr.end() && (isdigit(*it) || *it == ' ' || *it == '.' || *it == ',')) {
+                if (*it != ' ') {
+                    if ((*it == '.' || *it == ',')) {
+                        if (!has_point) {
+                            number.value.push_back('.');
+                            has_point = true;
+                        }
+                    }
+                    else {
+                        number.value.push_back(*it);
+                    }
+                }
+                it++;
+            }
+            number.index = i;
+            number.type = TypeOfToken::Number;
+            tokens.push_back(number);
+            it--;
+        }
+        i++;
+    }
+    return tokens;
 }
 
 std::vector<std::string> shunting_yard_algorithm(std::string_view expr) {
@@ -212,51 +331,70 @@ int main()
         safe_input(m_expr);
 
         if (m_expr == "help") {
-            std::cout << std::endl;
-            std::cout << "--------------------------------------------------------------------------------------------------------" << std::endl;
-            std::cout << "1. SUPPORTED OPERATORS AND SYMBOLS: \n" << std::endl;
-
-            std::cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -" << std::endl;
-            std::cout << "FORMAT: [math object]                -             [name] " << std::endl;
-            std::cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - \n" << std::endl;
-
-            std::array<std::string_view, 3> supported_symbols = {
-                "+, -, ⋅, /         -         basic arithmetic operators\n",
-                "𝑥ʸ                 -         exponentiation\n",
-                "%                  -         percent\n"
-            };
-            for (const auto& i : supported_symbols) {
-                std::cout << i << std::endl;
-            }
-
-
-
-            std::cout << "2. MATH EXPRESSIONS PRINTING GUIDE. \n" << std::endl;
-            std::cout
-                << "If you can't print Unicode math symbols (like ⋅)"
-                << " - you can enter them using the simple methods listed below, and they will be converted to Unicode.\n"
-                << "Here is the list of how to print symbols. \n" << std::endl;
-
-            std::cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -" << std::endl;
-            std::cout << "FORMAT: [Unicode symbol]        -        [simple method of printing] " << std::endl;
-            std::cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - \n" << std::endl;
-
-            std::array<std::string_view, 2> guide = {
-                "⋅            -          *",
-                "𝑥ʸ           -          x^(y) ",
-            };
-            for (const auto& i : guide) {
-                std::cout << i << std::endl;
-            }
-
-            std::cout << std::endl;
-
-            std::cout << "-------------------------------------------------------------------------------------------------------- \n \n" << std::endl;
+            help_command();
+            continue;
         }
         else if (m_expr == "exit") {
             break;
         }
+
+        std::vector<Token> some_tokens = lexer(m_expr);
+
+        std::cout << "┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐" << std::endl;
+        std::cout << "                                                         1. TOKENS                                                      " << std::endl;
+        for (const Token& token : some_tokens) {
+            token.print();
+        }
+        std::cout << "└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘" << std::endl;
     }
 
     return 0;
+}
+
+
+
+
+
+
+void help_command() {
+    std::cout << std::endl;
+    std::cout << "╔══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╗" << std::endl;
+    std::cout << "1. SUPPORTED OPERATORS AND SYMBOLS: \n" << std::endl;
+
+    std::cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -" << std::endl;
+    std::cout << "FORMAT: [math object]                -             [name] " << std::endl;
+    std::cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - \n" << std::endl;
+
+    std::array<std::string_view, 3> supported_symbols = {
+        "+, -, ⋅, /         -         basic arithmetic operators\n",
+        "𝑥ʸ                 -         power\n",
+        "%                  -         percent\n"
+    };
+    for (const auto& i : supported_symbols) {
+        std::cout << i << std::endl;
+    }
+
+
+
+    std::cout << "2. MATH EXPRESSIONS PRINTING GUIDE. \n" << std::endl;
+    std::cout
+        << "If you can't print Unicode math symbols (like ⋅)"
+        << " - you can enter them using the simple methods listed below, and they will be converted to Unicode.\n"
+        << "Here is the list of how to print symbols. \n" << std::endl;
+
+    std::cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -" << std::endl;
+    std::cout << "FORMAT: [Unicode symbol]        -        [simple method of printing] " << std::endl;
+    std::cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - \n" << std::endl;
+
+    std::array<std::string_view, 2> guide = {
+        "⋅            -          *",
+        "𝑥ʸ           -          x^(y) ",
+    };
+    for (const auto& i : guide) {
+        std::cout << i << std::endl;
+    }
+
+    std::cout << std::endl;
+
+    std::cout << "╚══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╝ \n \n" << std::endl;
 }
