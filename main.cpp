@@ -138,8 +138,8 @@ enum class TypeOfToken {
 	MultiplicationSign,
 	DivisionSign,
 	NegativeSign,
-	LeftParenthesis,
-	RightParenthesis,
+	OpenParenthesis,
+	CloseParenthesis,
 	PowerSign,
 	PercentSign
 };
@@ -197,11 +197,11 @@ std::vector<Token> lexer(std::string_view expr) {
 				tokens.push_back(a_operator);
 				break;
 			case '(':
-				a_operator.setter(i, TypeOfToken::LeftParenthesis, *it);
+				a_operator.setter(i, TypeOfToken::OpenParenthesis, *it);
 				tokens.push_back(a_operator);
 				break;
 			case ')':
-				a_operator.setter(i, TypeOfToken::RightParenthesis, *it);
+				a_operator.setter(i, TypeOfToken::CloseParenthesis, *it);
 				tokens.push_back(a_operator);
 				break;
 			case '%':
@@ -352,9 +352,9 @@ class PrattParser {
 			uint32_t operand = parse_expression(3);
 			return ast.add_node(token, operand);
 		}
-		else if (token.type == TypeOfToken::LeftParenthesis) {
+		else if (token.type == TypeOfToken::OpenParenthesis) {
 			uint32_t open_p = parse_expression(0);
-			if (i < tokens.size() && tokens[i].type == TypeOfToken::RightParenthesis) {
+			if (i < tokens.size() && tokens[i].type == TypeOfToken::CloseParenthesis) {
 				i++;
 			}
 			return open_p;
@@ -363,11 +363,15 @@ class PrattParser {
 	}
 
 	uint32_t LED(Token& token, int left) {
+		int right;
 		switch (token.type) {
 		case TypeOfToken::PercentSign:
 			return ast.add_node(token, left);
+		case TypeOfToken::PowerSign:
+			right = parse_expression(get_lbp(token.type) - 1);
+			return ast.add_node(token, left, right);
 		default:
-			int right = parse_expression(get_lbp(token.type));
+			right = parse_expression(get_lbp(token.type));
 			return ast.add_node(token, left, right);
 		}
 	}
