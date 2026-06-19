@@ -18,31 +18,53 @@
 #endif
 
 
-
-
 void help_command();
 
-void print_to_center(std::string_view text, int shift) {
+
+namespace TextFormatter {
+
+	int get_screen_width() {
 #ifdef _WIN32
-	HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
-	CONSOLE_SCREEN_BUFFER_INFO csbi;
-
-	int width;
-
-	if (GetConsoleScreenBufferInfo(hConsole, &csbi)) {
-		width = csbi.dwSize.X;
-	}
-	else {
-		width = 120;
-	}
-
-	if (text.length() < width) {
-		int spaces = ((width - text.length()) / 2) - shift;
-		std::println("{}", std::string(spaces, ' '));
-	}
-	std::println("{}", text);
+		HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
+		CONSOLE_SCREEN_BUFFER_INFO csbi;
+		return (GetConsoleScreenBufferInfo(hConsole, &csbi)) ? csbi.dwSize.X : 120;
 #endif
+	}
+
+	void print_divider(std::string_view text, int width = get_screen_width()) {
+		for (int i = 2; i < width; ++i) {
+			std::print("{}", text);
+		}
+	}
+
+	void print_header(std::string_view text, std::string_view header_element = "█", std::string_view color = "\033[33m") {
+		std::print("{}", color);
+		TextFormatter::print_divider(header_element, TextFormatter::get_screen_width() / 3);
+		std::print("{}", text);
+		TextFormatter::print_divider(header_element, TextFormatter::get_screen_width() / 3);
+		std::println("\033[0m \n");
+	}
+
+	void print_to_center(std::string_view text, int shift) {
+#ifdef _WIN32
+		int width = get_screen_width();
+
+		int text_len = static_cast<int>(text.length());
+
+		if (text_len < width) {
+			int spaces = ((width - text_len) / 2) - shift;
+			if (spaces < 0) spaces = 0;
+
+			std::println("{:>{}}{}", "", spaces, text);
+		}
+		else {
+			std::println("{}", text);
+		}
+#endif
+	}
 }
+
+
 
 
 
@@ -316,7 +338,7 @@ class Lexer {
 public:
 
 	Lexer(std::string_view expr) : expr(expr), it(expr.begin()), i(0) {
-		current_symbol_type = 0;	
+		current_symbol_type = 0;
 		current_symbol_value = 0;
 	}
 
@@ -570,7 +592,7 @@ int main()
 		}
 
 		std::println("┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐");
-		print_to_center("1. TOKENS", 0);
+		TextFormatter::print_to_center("1. TOKENS", 0);
 		for (const Token& token : std::get<std::vector<Token>>(tokens)) {
 			token.print();
 		}
@@ -600,15 +622,22 @@ int main()
 
 
 
-
-
 void help_command() {
-	std::println("\n╔══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╗");
-	std::println("1. SUPPORTED OPERATORS AND SYMBOLS:\n");
+	int width = TextFormatter::get_screen_width();
 
-	std::println("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - ");
-	std::println("FORMAT: [math object]                -             [name]");
-	std::println("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - \n");
+	std::print("╔");
+	TextFormatter::print_divider("═");
+	std::println("╗");
+	TextFormatter::print_to_center("HELP", 0);
+	std::print("╚");
+	TextFormatter::print_divider("═");
+	std::println("╝\n");
+
+
+	TextFormatter::print_header(" [ 1. 🧮 SUPPORTED OPERATORS AND SYMBOLS. ] ");
+	std::println("\033[36m FORMAT: [math object]          -        [name] \033[0m");
+	TextFormatter::print_divider("-");
+	std::println();
 
 
 	// this list in std::array will change.
@@ -619,6 +648,7 @@ void help_command() {
 			// Calculus: lim, →, ℯ, ln, 𝒅, ′, ″, ∂, ∫, ∫∫, ∫∫∫, ∮, ₀ ₁ ₂ ₃ ₄ ₅ ₆ ₇ ₈ ₉ ₐ ₑ ₒ ₓ ₙ, Σ, ∏, ꝏ, ∞, ⁺, ₊, ⁻, ₋.
 			// Complex numbers: 𝑧, 𝑖, 𝑤, 𝑗, ℛℯ, ℐ𝓂, z̄, arg.
 
+
 	constexpr std::array supported_symbols = {
 		"+, -, ⋅, /         -         basic arithmetic operators",
 		"𝑥ʸ                 -         power",
@@ -628,27 +658,43 @@ void help_command() {
 		std::println("{}", i);
 	}
 
+	std::println();
 
 
-	std::println("2. MATH EXPRESSIONS PRINTING GUIDE.\n");
+
+	TextFormatter::print_header(" [ 2. ✍️ MATH EXPRESSIONS PRINTING GUIDE. ] ");
 	std::println(
-		"If you can't print Unicode math symbols (like ⋅)"
+		"ℹ️  \033[36m If you can't print Unicode math symbols (like 2⋅2)"
 		"- you can enter them using the simple methods listed below, and they will be converted to Unicode.\n"
-		"Here is the list of how to print symbols.\n");
+		"Here is the list of how to print symbols. \033[0m \n");
 
-	std::println("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - ");
-	std::println("FORMAT: [Unicode symbol]        -        [simple method of printing]");
-	std::println("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - \n");
-
+	std::println("\033[36m FORMAT: [Unicode symbol]        -        [simple method of printing] \033[0m");
+	TextFormatter::print_divider("-");
+	std::println();
 	constexpr std::array guide = {
 		"⋅            -          *",
-		"𝑥ʸ           -          x^(y)",
+		"𝑥ʸ           -          x^y",
 	};
 	for (const auto& i : guide) {
 		std::println("{}", i);
 	}
-
 	std::println();
 
-	std::println("╚══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╝\n\n");
+
+	TextFormatter::print_header(" [ 3. 📓 NOTICES. ] ");
+	std::print("\033[36m");
+	constexpr std::array notices = {
+		"1) You can print negative numbers without parentheses even not at the beginning."
+	};
+	for (const auto& i : notices) {
+		std::println("{}", i);
+	}
+	std::println("\033[0m");
+
+
+
+
+	TextFormatter::print_to_center("Enjoy using the program!", 0);
+	TextFormatter::print_divider("━");
+	std::println();
 }
