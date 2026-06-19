@@ -182,6 +182,7 @@ constexpr std::array<bitmask, 256> lookup_table_fill() {
 class Lexer {
 	static constexpr std::array<bitmask, 256> ascii_symbols = lookup_table_fill();
 	bitmask math_operators = MASK_OPERATOR | MASK_PARENTHESIS;
+	bitmask mask_negativesign = MASK_OPERATOR | MASK_PARENTHESIS | MASK_SPACE;
 
 	ErrorHandler error_handler;
 
@@ -248,7 +249,7 @@ class Lexer {
 					tokens.push_back(a_operator);
 					break;
 				case '-':
-					if (it == expr.begin() || *(std::prev(it)) == '(') {
+					if (it == expr.begin() || (ascii_symbols[*(std::prev(it))] & mask_negativesign)) {
 						a_operator.setter(i, TypeOfToken::NegativeSign, '~');
 						tokens.push_back(a_operator);
 					}
