@@ -1,10 +1,10 @@
 ﻿#include <iostream>
+#include <print>
 #include <vector>
 #include <array>
 #include <string>
 #include <string_view>
-//#include <concepts>
-#include <algorithm>
+#include <iterator>
 #include <expected>
 #include <variant>
 #include <utility>
@@ -38,9 +38,9 @@ void print_to_center(std::string_view text, int shift) {
 
 	if (text.length() < width) {
 		int spaces = ((width - text.length()) / 2) - shift;
-		std::cout << std::string(spaces, ' ');
+		std::println("{}", std::string(spaces, ' '));
 	}
-	std::cout << text;
+	std::println("{}", text);
 #endif
 }
 
@@ -74,31 +74,31 @@ struct Token {
 	}
 
 	void print() const {
-		std::cout << std::left;
-		std::cout
-			<< " [index: " << std::setw(13) << std::string(std::to_string(index) + ";")
-			<< " type: " << std::setw(23) << (std::string(magic_enum::enum_name(type)) + ";")
-			<< " value: " << std::setw(1) << value
-			<< " ] \n";
+		std::println(" [index: {:<13} type: {:<23} value: {:<1} ]",
+			std::to_string(index) + ";",
+			std::string(magic_enum::enum_name(type)) + ";",
+			value
+		);
 	}
 };
 
 
 
-	enum class TypeOfError {
-		NoInput,
-		UnknownSymbol,
-		ParenthesesImbalance,
-		ExtraOperator,
-		InvalidOperator,
-		UnexpectedEnd,
-		InvalidPrefixOperator
-	};
+enum class TypeOfError {
+	NoInput,
+	UnknownSymbol,
+	ParenthesesImbalance,
+	ExtraOperator,
+	InvalidOperator,
+	UnexpectedEnd,
+	InvalidPrefixOperator,
+	InvalidFloatingPoint
+};
 
-	struct ErrorMessage {
-		Token defect_token;
-		std::string message;
-	};
+struct ErrorMessage {
+	Token defect_token;
+	std::string message;
+};
 
 
 struct ErrorHandler {
@@ -107,19 +107,21 @@ struct ErrorHandler {
 	std::string error_message_templates(TypeOfError error_type) {
 		switch (error_type) {
 		case TypeOfError::NoInput:
-			return "You haven't entered anything. Was this accidental?\n";
+			return "You haven't entered anything. Was this accidental?";
 		case TypeOfError::UnknownSymbol:
-			return "The unknown symbol has been detected. It isn't math symbol or don't supported by this program. The list of supported symbols you can check by 'help' command\n";
+			return "The unknown symbol has been detected. It isn't math symbol or don't supported by this program. The list of supported symbols you can check by 'help' command";
 		case TypeOfError::ExtraOperator:
-			return "An extra operator was detected.\n";
+			return "An extra operator was detected.";
 		case TypeOfError::UnexpectedEnd:
-			return "The end of the expression or the subexpression has suddenly detected.\n";
+			return "The end of the expression or the subexpression has suddenly detected.";
 		case TypeOfError::InvalidOperator:
-			return "Invalid operator was detected: A binary-operator have less than two operands or a postfix-operator is before the operand.\n";
+			return "Invalid operator was detected: A binary-operator have less than two operands or a postfix-operator is before the operand.";
 		case TypeOfError::ParenthesesImbalance:
-			return "The count of open- and close parentheses isn't same.\n";
+			return "The count of open- and close parentheses isn't same.";
 		case TypeOfError::InvalidPrefixOperator:
-			return "The prefix-operator has detected after the operand. It must be before an operand.\n";
+			return "The prefix-operator was detected after the operand. It must be before an operand.";
+		case TypeOfError::InvalidFloatingPoint:
+			return "An unexpected floating point was detected outside the operand, or there were two or more of them. It must be a single one and located inside the operand.";
 		default:
 			return "Unknown error\n";
 		}
@@ -135,28 +137,114 @@ struct ErrorHandler {
 };
 
 
+
 using SafeTokens = std::expected<std::vector<Token>, TypeOfError>;
 using LexerResult = std::variant<std::vector<Token>, std::vector<ErrorMessage>>;
 
-class Lexer {
 
-	std::string expr;
-	
-	SafeTokens tokens;
+
+
+using bitmask = uint8_t;
+
+constexpr bitmask MASK_NUMBER = 1 << 0;
+constexpr bitmask MASK_OPERATOR = 1 << 1;
+constexpr bitmask MASK_PARENTHESIS = 1 << 2;
+constexpr bitmask MASK_FLOATING_POINT = 1 << 3;
+constexpr bitmask MASK_SPACE = 1 << 4;
+
+constexpr std::array<bitmask, 256> lookup_table_fill() {
+	std::array<bitmask, 256> symbols{};
+
+	for (int i = '0'; i <= '9'; ++i) {
+		symbols[i] = MASK_NUMBER;
+	}
+
+	symbols['+'] = MASK_OPERATOR;
+	symbols['-'] = MASK_OPERATOR;
+	symbols['*'] = MASK_OPERATOR;
+	symbols['/'] = MASK_OPERATOR;
+
+	symbols['^'] = MASK_OPERATOR;
+	symbols['%'] = MASK_OPERATOR;
+
+	symbols['.'] = MASK_FLOATING_POINT;
+	symbols[','] = MASK_FLOATING_POINT;
+
+	symbols['('] = MASK_PARENTHESIS;
+	symbols[')'] = MASK_PARENTHESIS;
+
+	symbols[' '] = MASK_SPACE;
+
+	return symbols;
+}
+
+
+class Lexer {
+	static constexpr std::array<bitmask, 256> ascii_symbols = lookup_table_fill();
+	bitmask math_operators = MASK_OPERATOR | MASK_PARENTHESIS;
 
 	ErrorHandler error_handler;
 
-	SafeTokens tokenization(std::string_view expr) {
-		std::vector<Token> tokens;
-		int i = 0;
-		for (auto it = expr.begin(); it != expr.end(); it++) {
-			if (*it == ' ') continue;
+	std::string_view expr;
+	std::string_view::const_iterator it;
+	int i;
+	bitmask current_symbol_type;
+	uint8_t current_symbol_value;
 
-			if (std::string_view("+-*/()%^").find(*it) != std::string_view::npos) {
+	std::expected<Token, TypeOfError> number_tokenization() {
+		Token number;
+		bool has_point = false;
+
+		bitmask in_number_symbols = MASK_NUMBER | MASK_FLOATING_POINT | MASK_SPACE;
+
+		while (current_symbol_type & in_number_symbols) {
+			if (current_symbol_type & MASK_FLOATING_POINT) {
+				if (has_point) {
+					return std::unexpected(TypeOfError::InvalidFloatingPoint);
+				}
+				else {
+					number.value.push_back('.');
+					has_point = true;
+				}
+			}
+			else if (!(current_symbol_type & MASK_SPACE)) {
+				number.value.push_back(current_symbol_value);
+			}
+
+			++it;
+			if (it == expr.end()) {
+				break;
+			}
+			current_symbol_type = ascii_symbols[*it];
+			current_symbol_value = *it;
+		}
+
+		if (static_cast<bitmask>(ascii_symbols[number.value.back()]) & MASK_FLOATING_POINT) {
+			return std::unexpected(TypeOfError::InvalidFloatingPoint);
+		}
+
+		return number;
+	}
+
+	SafeTokens tokenization() {
+		std::vector<Token> tokens;
+
+		for (; it != expr.end(); ++it) {
+			current_symbol_value = static_cast<bitmask>(*it);
+			if (ascii_symbols[current_symbol_value] == 0) {
+				Token defect_token;
+				defect_token.setter(i, TypeOfToken::Default, current_symbol_value);
+				return std::unexpected(TypeOfError::UnknownSymbol);
+			}
+
+			current_symbol_type = ascii_symbols[current_symbol_value];
+			if (current_symbol_type & MASK_SPACE) continue;
+
+			if (current_symbol_type & math_operators) {
 				Token a_operator;
-				switch (*it) {
+				switch (current_symbol_value) {
 				case '+':
-					a_operator.setter(i, TypeOfToken::Plus, *it);
+					a_operator.setter(i, TypeOfToken::Plus, current_symbol_value);
 					tokens.push_back(a_operator);
 					break;
 				case '-':
@@ -165,67 +253,52 @@ class Lexer {
 						tokens.push_back(a_operator);
 					}
 					else {
-						a_operator.setter(i, TypeOfToken::Minus, *it);
+						a_operator.setter(i, TypeOfToken::Minus, current_symbol_value);
 						tokens.push_back(a_operator);
 					}
 					break;
 				case '*':
-					a_operator.setter(i, TypeOfToken::MultiplicationSign, *it);
+					a_operator.setter(i, TypeOfToken::MultiplicationSign, current_symbol_value);
 					tokens.push_back(a_operator);
 					break;
 				case '/':
-					a_operator.setter(i, TypeOfToken::DivisionSign, *it);
+					a_operator.setter(i, TypeOfToken::DivisionSign, current_symbol_value);
 					tokens.push_back(a_operator);
 					break;
 				case '(':
-					a_operator.setter(i, TypeOfToken::OpenParenthesis, *it);
+					a_operator.setter(i, TypeOfToken::OpenParenthesis, current_symbol_value);
 					tokens.push_back(a_operator);
 					break;
 				case ')':
-					a_operator.setter(i, TypeOfToken::CloseParenthesis, *it);
+					a_operator.setter(i, TypeOfToken::CloseParenthesis, current_symbol_value);
 					tokens.push_back(a_operator);
 					break;
 				case '%':
-					a_operator.setter(i, TypeOfToken::PercentSign, *it);
+					a_operator.setter(i, TypeOfToken::PercentSign, current_symbol_value);
 					tokens.push_back(a_operator);
 					break;
 				case '^':
-					a_operator.setter(i, TypeOfToken::PowerSign, *it);
+					a_operator.setter(i, TypeOfToken::PowerSign, current_symbol_value);
 					tokens.push_back(a_operator);
 					break;
 				default:
 					break;
 				}
 			}
-			else if (std::string_view("0123456789., ").find(*it) != std::string_view::npos) {
-				Token number;
-				bool has_point = false;
-				while (it != expr.end() && (isdigit(*it) || *it == ' ' || *it == '.' || *it == ',')) {
-					if (*it != ' ') {
-						if ((*it == '.' || *it == ',')) {
-							if (!has_point) {
-								number.value.push_back('.');
-								has_point = true;
-							}
-						}
-						else {
-							number.value.push_back(*it);
-						}
-					}
-					it++;
+			else if (current_symbol_type & MASK_NUMBER) {
+				std::expected<Token, TypeOfError> number = number_tokenization();
+				if (!number.has_value()) {
+					Token defect_number;
+					defect_number.setter(i, TypeOfToken::Default, current_symbol_value);
+					error_handler.errors_list.push_back(ErrorMessage(defect_number, error_handler.error_message_templates(TypeOfError::InvalidFloatingPoint)));
+					return std::unexpected(TypeOfError::InvalidFloatingPoint);
 				}
-				number.index = i;
-				number.type = TypeOfToken::Number;
-				tokens.push_back(number);
-				it--;
+				number->index = i;
+				number->type = TypeOfToken::Number;
+				tokens.push_back(number.value());
+				--it;
 			}
-			else {
-				Token defect_token;
-				defect_token.setter(i, TypeOfToken::Default, *it);
-				error_handler.errors_list.push_back(ErrorMessage(defect_token, error_handler.error_message_templates(TypeOfError::UnknownSymbol)));
-				return std::unexpected(TypeOfError::UnknownSymbol);
-			}
-			i++;
+			++i;
 		}
 
 		Token eof;
@@ -240,10 +313,15 @@ class Lexer {
 		return tokens;
 	}
 public:
-	Lexer(std::string_view expr) : expr(expr) {}
+
+	Lexer(std::string_view expr) : expr(expr), it(expr.begin()), i(0) {
+		current_symbol_type = 0;	
+		current_symbol_value = 0;
+	}
 
 	LexerResult get_lexer_result() {
-		tokens = tokenization(expr);
+		SafeTokens tokens;
+		tokens = tokenization();
 		if (tokens.has_value()) {
 			return std::move(tokens.value());
 		}
@@ -340,17 +418,12 @@ struct AbstractSyntaxTree_SoA {
 using ParserResult = std::variant<AbstractSyntaxTree_SoA, std::vector<ErrorMessage>>;
 
 class PrattParser {
-
 	std::vector<Token> tokens;
 	int i = 0;
 	int current_index;
 	int openp_index;
 	AbstractSyntaxTree_SoA ast;
-
 	ErrorHandler error_handler;
-
-
-
 
 	int lookahead_lbp(TypeOfToken token_type) const {
 		switch (token_type) {
@@ -432,7 +505,6 @@ public:
 			return std::unexpected(left.error());
 		}
 
-
 		while (rbp < lookahead_lbp(tokens[i].type)) {
 			Token op_token = tokens[i];
 			i++;
@@ -463,16 +535,17 @@ int main()
 	SetConsoleCP(CP_UTF8);
 #endif
 
-	std::cout << "Welcome to all-math-gpu-calculator! This project was created for performing calculations from basic arithmetic to advanced mathematics.\n";
-	std::cout << "Enter: \n 1) 'exit' to close the program. \n 2) 'help' to show the expression printing guide and supported operators and symbols. \n \n";
-	std::cout << "The entered mathematical expression will be displayed in a clean mathematical format.\n\n";
+	std::println("Welcome to all-math-gpu-calculator! This project was created for performing calculations from basic arithmetic to advanced mathematics.)");
+	std::println("Enter: \n 1) 'exit' to close the program. \n 2) 'help' to show the expression printing guide and supported operators and symbols.\n");
+	std::println("The entered mathematical expression will be displayed in a clean mathematical format.\n");
 
 	while (true) {
-		std::cout << "Enter any mathematical expression or command:\n";
+		std::println("Enter any mathematical expression or command:");
 
 		ErrorHandler error_handler;
 
 		std::string m_expr;
+
 		std::getline(std::cin, m_expr);
 
 		if (m_expr == "help") {
@@ -487,35 +560,35 @@ int main()
 		LexerResult tokens = lexer.get_lexer_result();
 
 		if (std::holds_alternative<std::vector<ErrorMessage>>(tokens)) {
-			std::cout << "\033[1;31m Math expression is invalid. The unexpected tokens: \n";
+			std::println("\033[1;31m Math expression is invalid. The unexpected tokens:");
 			for (auto& it : std::get<std::vector<ErrorMessage>>(tokens)) {
 				it.defect_token.print();
-				std::cout << '\n' << it.message + "\033[0m" << '\n\n';
+				std::println("{}\033[0m\n", it.message);
 			}
 			continue;
 		}
 
-		std::cout << "┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐\n";
-		print_to_center("1. TOKENS\n", 0);
+		std::println("┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐");
+		print_to_center("1. TOKENS", 0);
 		for (const Token& token : std::get<std::vector<Token>>(tokens)) {
 			token.print();
 		}
+		std::println();
 
 
-		std::cout << "\n";
 		PrattParser parser(std::get<std::vector<Token>>(tokens));
 		parser.parse_expression(0);
 		ParserResult soa_ast = parser.get_parser_result();
 
 		if (std::holds_alternative<std::vector<ErrorMessage>>(soa_ast)) {
-			std::cout << "\033[1;31m Math expression is invalid. The unexpected tokens: \n";
+			std::println("\033[1;31m Math expression is invalid. The unexpected tokens:");
 			for (auto& it : std::get<std::vector<ErrorMessage>>(soa_ast)) {
 				it.defect_token.print();
-				std::cout << '\n' << it.message + "\033[0m" << '\n\n';
+				std::println("{}\033[0m\n\n", it.message);
 			}
 		}
 		else {
-			std::cout << "\033[32m Math expression is valid!\n" << "\033[0m";
+			std::println("\033[32m Math expression is valid!\033[0m");
 			continue;
 		}
 	}
@@ -529,12 +602,12 @@ int main()
 
 
 void help_command() {
-	std::cout << "\n╔══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╗\n";
-	std::cout << "1. SUPPORTED OPERATORS AND SYMBOLS: \n \n";
+	std::println("\n╔══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╗");
+	std::println("1. SUPPORTED OPERATORS AND SYMBOLS:\n");
 
-	std::cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - \n";
-	std::cout << "FORMAT: [math object]                -             [name] \n";
-	std::cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - \n \n";
+	std::println("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - ");
+	std::println("FORMAT: [math object]                -             [name]");
+	std::println("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - \n");
 
 
 	// this list in std::array will change.
@@ -545,36 +618,36 @@ void help_command() {
 			// Calculus: lim, →, ℯ, ln, 𝒅, ′, ″, ∂, ∫, ∫∫, ∫∫∫, ∮, ₀ ₁ ₂ ₃ ₄ ₅ ₆ ₇ ₈ ₉ ₐ ₑ ₒ ₓ ₙ, Σ, ∏, ꝏ, ∞, ⁺, ₊, ⁻, ₋.
 			// Complex numbers: 𝑧, 𝑖, 𝑤, 𝑗, ℛℯ, ℐ𝓂, z̄, arg.
 
-	std::array<std::string_view, 3> supported_symbols = {
-		"+, -, ⋅, /         -         basic arithmetic operators\n",
-		"𝑥ʸ                 -         power\n",
-		"%                  -         percent\n"
+	constexpr std::array supported_symbols = {
+		"+, -, ⋅, /         -         basic arithmetic operators",
+		"𝑥ʸ                 -         power",
+		"%                  -         percent"
 	};
 	for (const auto& i : supported_symbols) {
-		std::cout << i << "\n";
+		std::println("{}", i);
 	}
 
 
 
-	std::cout << "2. MATH EXPRESSIONS PRINTING GUIDE. \n \n";
-	std::cout
-		<< "If you can't print Unicode math symbols (like ⋅)"
-		<< " - you can enter them using the simple methods listed below, and they will be converted to Unicode.\n"
-		<< "Here is the list of how to print symbols. \n\n ";
+	std::println("2. MATH EXPRESSIONS PRINTING GUIDE.\n");
+	std::println(
+		"If you can't print Unicode math symbols (like ⋅)"
+		"- you can enter them using the simple methods listed below, and they will be converted to Unicode.\n"
+		"Here is the list of how to print symbols.\n");
 
-	std::cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - \n";
-	std::cout << "FORMAT: [Unicode symbol]        -        [simple method of printing] " << std::endl;
-	std::cout << "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - \n\n";
+	std::println("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - ");
+	std::println("FORMAT: [Unicode symbol]        -        [simple method of printing]");
+	std::println("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - \n");
 
-	std::array<std::string_view, 2> guide = {
+	constexpr std::array guide = {
 		"⋅            -          *",
-		"𝑥ʸ           -          x^(y) ",
+		"𝑥ʸ           -          x^(y)",
 	};
 	for (const auto& i : guide) {
-		std::cout << i << "\n";
+		std::println("{}", i);
 	}
 
-	std::cout << "\n";
+	std::println();
 
-	std::cout << "╚══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╝ \n \n \n";
+	std::println("╚══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╝\n\n");
 }
