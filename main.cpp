@@ -404,7 +404,7 @@ using SafeUint32t = std::expected<uint32_t, TypeOfError>;
 
 struct AbstractSyntaxTree_SoA {
 	std::vector<NodeTags> node_tags;
-	std::vector<std::string_view> node_data;
+	std::vector<std::string> node_data;
 	std::vector<SafeUint32t> child_relationships;
 	std::vector<int32_t> child_start;
 	std::vector<uint32_t> child_count;
@@ -551,6 +551,136 @@ public:
 	}
 };
 
+
+
+class ExpressionConverter {
+	AbstractSyntaxTree_SoA ast;
+	int32_t index_field;
+	std::string latex_text_field;
+	std::string unicode_text_field;
+
+	bool parent_is_power = false;
+	bool parent_is_stronger = false;
+
+	std::string get_unicode_power_exponent(std::string& exponent) {
+		std::string exponent_expr;
+		for (int i = 0; i < exponent.size(); ++i) {
+			switch (exponent[i]) {
+			case '0': exponent_expr += "⁰"; break;
+			case '1': exponent_expr += "¹"; break;
+			case '2': exponent_expr += "²"; break;
+			case '3': exponent_expr += "³"; break;
+			case '4': exponent_expr += "⁴"; break;
+			case '5': exponent_expr += "⁵"; break;
+			case '6': exponent_expr += "⁶"; break;
+			case '7': exponent_expr += "⁷"; break;
+			case '8': exponent_expr += "⁸"; break;
+			case '9': exponent_expr += "⁹"; break;
+			}
+		}
+		return exponent_expr;
+	}
+
+	void expr_converter(int32_t index, std::vector<std::string>& latex_text, std::vector<std::string>& unicode_text) {
+		index_field = index;
+		if (ast.child_start[index_field] == -1) {
+			if (parent_is_power) {
+				unicode_text.push_back(get_unicode_power_exponent(ast.node_data[index_field]));
+			}
+			else {
+				unicode_text.push_back(ast.node_data[index_field]);
+			}
+			latex_text.push_back(ast.node_data[index_field]);
+			return;
+		}
+
+		switch (ast.node_tags[index_field]) {
+		case NodeTags::Add:
+			expr_converter(--index_field, latex_text, unicode_text);
+			latex_text.push_back(" + ");
+			unicode_text.push_back(parent_is_power ? "⁺" : " + ");
+			expr_converter(--index_field, latex_text, unicode_text);
+			break;
+		case NodeTags::Subtract:
+			expr_converter(--index_field, latex_text, unicode_text);
+			latex_text.push_back(" − ");
+			unicode_text.push_back(parent_is_power ? "⁻" : " − ");
+			expr_converter(--index_field, latex_text, unicode_text);
+			break;
+		case NodeTags::Multiply:
+			expr_converter(--index_field, latex_text, unicode_text);
+			latex_text.push_back(" \\cdot ");
+			unicode_text.push_back(" ⋅ ");
+			expr_converter(--index_field, latex_text, unicode_text);
+			break;
+		case NodeTags::Divide:
+			latex_text.push_back("}");
+			expr_converter(--index_field, latex_text, unicode_text);
+			latex_text.push_back("}{");
+			expr_converter(--index_field, latex_text, unicode_text);
+			latex_text.push_back(" \\frac{");
+			break;
+		case NodeTags::NegativeNum:
+			expr_converter(--index_field, latex_text, unicode_text);
+			latex_text.push_back("−");
+			unicode_text.push_back("−");
+			break;
+		case NodeTags::Percent:
+			expr_converter(--index_field, latex_text, unicode_text);
+			latex_text.push_back(" \\,\\%");
+			unicode_text.push_back("% ");
+			break;
+		case NodeTags::Power:
+			latex_text.push_back("}");
+			parent_is_power = true;
+			expr_converter(--index_field, latex_text, unicode_text);
+			parent_is_power = false;
+			latex_text.push_back("^{");
+			expr_converter(--index_field, latex_text, unicode_text);
+			break;
+		}
+	}
+	void to_latex_and_unicode_text() {
+		std::vector<std::string> latex_text_syntax;
+		std::vector<std::string> unicode_text;
+
+		latex_text_syntax.reserve(ast.node_data.size());
+		unicode_text.reserve(ast.node_data.size());
+
+		expr_converter(ast.child_start.size() - 1, latex_text_syntax, unicode_text);
+
+		std::reverse(latex_text_syntax.begin(), latex_text_syntax.end());
+		std::reverse(unicode_text.begin(), unicode_text.end());
+
+		std::string latex_text_string;
+		latex_text_string.reserve(latex_text_syntax.size());
+		for (int i = 0; i < latex_text_syntax.size(); ++i) {
+			latex_text_string += latex_text_syntax[i];
+		}
+
+		std::string unicode_text_string;
+		unicode_text_string.reserve(unicode_text.size());
+		for (int i = 0; i < unicode_text.size(); ++i) {
+			unicode_text_string += unicode_text[i];
+		}
+
+		latex_text_field = latex_text_string;
+		unicode_text_field = unicode_text_string;
+	}
+public:
+	ExpressionConverter(ParserResult& ast) {
+		this->ast = (std::get<AbstractSyntaxTree_SoA>(ast));
+		index_field = this->ast.child_start.size() - 1;
+	}
+
+	void expr_convert() {
+		to_latex_and_unicode_text();
+		TextFormatter::print_to_center(latex_text_field, 0);
+		TextFormatter::print_to_center(unicode_text_field, 0);
+	}
+};
+
+
 int main()
 {
 #ifdef _WIN32
@@ -598,7 +728,7 @@ int main()
 		}
 		std::println();
 
-
+		TextFormatter::print_to_center("2. ABSTRACT SYNTAX TREE VALIDATION.", 0);
 		PrattParser parser(std::get<std::vector<Token>>(tokens));
 		parser.parse_expression(0);
 		ParserResult soa_ast = parser.get_parser_result();
@@ -609,11 +739,14 @@ int main()
 				it.defect_token.print();
 				std::println("{}\033[0m\n\n", it.message);
 			}
+			continue;
 		}
 		else {
 			std::println("\033[32m Math expression is valid!\033[0m");
-			continue;
 		}
+		TextFormatter::print_to_center("3. LATEX- AND UNICODE TEXT.", 0);
+		ExpressionConverter converter(soa_ast);
+		converter.expr_convert();
 	}
 
 	return 0;
@@ -643,7 +776,7 @@ void help_command() {
 	// this list in std::array will change.
 
 		// TODO:
-			// General Math: ⋅, ⁰ ¹ ² ³ ⁴ ⁵ ⁶ ⁷ ⁸ ⁹ ˣ ʸ ⁿ, √(and ³√, ⁴√, ⁵√), variables(𝑥, 𝑦), =, ≈, ƒ, log(and log₂, log₁₀), | (modules).
+			// General Math: ˣ ʸ ⁿ, √(and ³√, ⁴√, ⁵√), variables(𝑥, 𝑦), =, ≈, ƒ, log(and log₂, log₁₀), | (modules).
 			// Trigonometry: °, π, sin, cos, tan, cotan, arcsin, arccos, arctan, atan2, arccotan, sec.
 			// Calculus: lim, →, ℯ, ln, 𝒅, ′, ″, ∂, ∫, ∫∫, ∫∫∫, ∮, ₀ ₁ ₂ ₃ ₄ ₅ ₆ ₇ ₈ ₉ ₐ ₑ ₒ ₓ ₙ, Σ, ∏, ꝏ, ∞, ⁺, ₊, ⁻, ₋.
 			// Complex numbers: 𝑧, 𝑖, 𝑤, 𝑗, ℛℯ, ℐ𝓂, z̄, arg.
@@ -684,7 +817,10 @@ void help_command() {
 	TextFormatter::print_header(" [ 3. 📓 NOTICES. ] ");
 	std::print("\033[36m");
 	constexpr std::array notices = {
-		"1) You can print negative numbers without parentheses even not at the beginning."
+		"1) You can print negative numbers without parentheses even not at the beginning.",
+		"2) You need to use parentheses if the exponent contains more than just a single constant or variable (for example, an operator).",
+		"3) Unicode does not support nested exponents like LaTeX; it only supports one level(e. g. 2², but not 2²²).",
+		"4) Programm does not support output LaTeX image in now."
 	};
 	for (const auto& i : notices) {
 		std::println("{}", i);
