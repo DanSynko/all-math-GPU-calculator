@@ -8,6 +8,7 @@
 #include <expected>
 #include <variant>
 #include <utility>
+#include <charconv>
 
 #include "include/magic_enum-master/include/magic_enum/magic_enum.hpp"
 
@@ -681,6 +682,186 @@ public:
 };
 
 
+
+enum class OpCode {
+	ldc,
+	add,
+	sub,
+	mul,
+	div,
+	pow,
+	pct,
+	neg
+};
+
+enum class IRInstructionType {
+	i32,
+	f32,
+	f64
+};
+
+struct IRInstruction {
+	OpCode op_code;
+	int32_t ssa_index;
+	int32_t operands_start;
+	int32_t operands_count;
+	std::variant<int32_t, float, double> payload;
+	IRInstructionType type;
+};
+
+class IRGenerator {
+	AbstractSyntaxTree_SoA ast;
+
+	std::vector<IRInstruction> ir_instructions;
+	std::vector<SafeUint32t> operands_pool;
+
+	std::variant<int32_t, float, double> string_to_number(std::string_view string_const) {
+		std::variant<int32_t, float, double> to_number;
+		if (string_const.contains('.')) {
+			if (string_const.size() <= 7) {
+				to_number.emplace<float>();
+			}
+			else {
+				to_number.emplace<double>();
+			}
+		}
+		else {
+			to_number.emplace<int32_t>();
+		}
+
+		std::visit([&string_const](auto& val) {
+			std::from_chars(string_const.data(), string_const.data() + string_const.size(), val);
+			}, to_number);
+
+		return to_number;
+	}
+
+	void ssaindex_to_string(int32_t ssaindex, std::string& str) {
+		constexpr size_t max_chars = std::numeric_limits<int32_t>::digits10 + 2;
+		char buffer[max_chars];
+		auto [ptr, ec] = std::to_chars(buffer, buffer + max_chars, ssaindex);
+		if (ec == std::errc{}) {
+			str.append(buffer, ptr - buffer);
+		}
+	}
+
+	IRInstructionType get_type(const std::variant<int32_t, float, double>& numbered_payload) {
+		IRInstructionType type;
+		std::visit([&](const auto& payload_type) {
+			using T = std::decay_t<decltype(payload_type)>;
+
+			if constexpr (std::is_same_v<T, int32_t>) {
+				type = IRInstructionType::i32;
+			}
+			else if constexpr (std::is_same_v<T, float>) {
+				type = IRInstructionType::f32;
+			}
+			else if constexpr (std::is_same_v<T, double>) {
+				type = IRInstructionType::f64;
+			}
+			}, numbered_payload);
+
+		return type;
+	}
+
+	IRInstructionType get_type(IRInstructionType& left_child_type, IRInstructionType& right_child_type) {
+		if (left_child_type != right_child_type) {
+			if (right_child_type == IRInstructionType::i32) {
+				right_child_type = left_child_type;
+				return left_child_type;
+			}
+			else if (left_child_type == IRInstructionType::f64) {
+				right_child_type = IRInstructionType::f64;
+				return IRInstructionType::f64;
+			}
+			else if (left_child_type == IRInstructionType::i32) {
+				left_child_type = right_child_type;
+				return right_child_type;
+			}
+			else if (right_child_type == IRInstructionType::f64) {
+				left_child_type = IRInstructionType::f64;
+				return IRInstructionType::f64;
+			}
+		}
+		else {
+			return right_child_type;
+		}
+	}
+
+	OpCode get_opcode(NodeTags node_tage) const {
+		switch (node_tage) {
+		case NodeTags::Add: return OpCode::add;
+		case NodeTags::Subtract: return OpCode::sub;
+		case NodeTags::Multiply: return OpCode::mul;
+		case NodeTags::Divide: return OpCode::div;
+		case NodeTags::Power: return OpCode::pow;
+		case NodeTags::NegativeNum: return OpCode::neg;
+		case NodeTags::Percent: return OpCode::pct;
+		}
+	}
+public:
+	IRGenerator(ParserResult& ast) {
+		this->ast = std::get<AbstractSyntaxTree_SoA>(ast);
+		operands_pool = std::move(std::get<AbstractSyntaxTree_SoA>(ast).child_relationships);
+	}
+
+	void IR_generate() {
+		for (int i = 0; i < ast.node_tags.size(); ++i) {
+			switch (ast.node_tags[i]) {
+			case NodeTags::Add:
+			case NodeTags::Subtract:
+			case NodeTags::Multiply:
+			case NodeTags::Divide:
+			case NodeTags::Power: {
+				ir_instructions.push_back(IRInstruction(get_opcode(ast.node_tags[i]), i, ast.child_start[i], 2));
+				auto& current_ir = ir_instructions.back();
+				IRInstructionType left_child_type = ir_instructions[operands_pool[current_ir.operands_start].value()].type;
+				IRInstructionType right_child_type = ir_instructions[operands_pool[current_ir.operands_start + 1].value()].type;
+				current_ir.type = get_type(left_child_type, right_child_type);
+				continue;
+			}
+			case NodeTags::NegativeNum:
+			case NodeTags::Percent: {
+				ir_instructions.push_back(IRInstruction(get_opcode(ast.node_tags[i]), i, ast.child_start[i], 1));
+				auto& current_ir = ir_instructions.back();
+				current_ir.type = ir_instructions[operands_pool[current_ir.operands_start].value()].type;
+				continue;
+			}
+			case NodeTags::Number: {
+				auto numbered_payload = string_to_number(ast.node_data[i]);
+				ir_instructions.push_back(IRInstruction(OpCode::ldc, i, -1, 0, numbered_payload, get_type(numbered_payload)));
+				continue;
+			}
+			}
+		}
+	}
+	void IR_print() {
+		for (auto& i : ir_instructions) {
+			std::print("v{} = {} {}", i.ssa_index, magic_enum::enum_name(i.op_code), magic_enum::enum_name(i.type));
+
+			switch (i.operands_count) {
+			case 0:
+				std::visit([&](const auto& val) {
+					std::println(" {}", val);
+					}, i.payload);
+				break;
+			default: {
+				std::string one_instruction;
+
+				for (int op_i = i.operands_start; op_i < i.operands_start + i.operands_count; ++op_i) {
+					one_instruction += (op_i == i.operands_start) ? " v" : ", v";
+					ssaindex_to_string(ir_instructions[operands_pool[op_i].value()].ssa_index, one_instruction);
+				}
+
+				std::println("{}", one_instruction);
+				break;
+			}
+			}
+		}
+	}
+};
+
+
 int main()
 {
 #ifdef _WIN32
@@ -744,9 +925,18 @@ int main()
 		else {
 			std::println("\033[32m Math expression is valid!\033[0m");
 		}
-		TextFormatter::print_to_center("3. LATEX- AND UNICODE TEXT.", 0);
+		TextFormatter::print_to_center("3. LATEX- AND UNICODE TEXT.\n", 0);
 		ExpressionConverter converter(soa_ast);
 		converter.expr_convert();
+		std::println();
+
+		TextFormatter::print_to_center("4. IR GENERATION.\n", 0);
+
+		std::vector<IRInstruction> ir_instructions;
+
+		IRGenerator ir_generator(soa_ast);
+		ir_generator.IR_generate();
+		ir_generator.IR_print();
 	}
 
 	return 0;
@@ -776,7 +966,7 @@ void help_command() {
 	// this list in std::array will change.
 
 		// TODO:
-			// General Math: ˣ ʸ ⁿ, √(and ³√, ⁴√, ⁵√), variables(𝑥, 𝑦), =, ≈, ƒ, log(and log₂, log₁₀), | (modules).
+			// General Math: ⁽ ⁾ ˣ ʸ ⁿ, √(and ³√, ⁴√, ⁵√), variables(𝑥, 𝑦), =, ≈, ƒ, log(and log₂, log₁₀), | (modules).
 			// Trigonometry: °, π, sin, cos, tan, cotan, arcsin, arccos, arctan, atan2, arccotan, sec.
 			// Calculus: lim, →, ℯ, ln, 𝒅, ′, ″, ∂, ∫, ∫∫, ∫∫∫, ∮, ₀ ₁ ₂ ₃ ₄ ₅ ₆ ₇ ₈ ₉ ₐ ₑ ₒ ₓ ₙ, Σ, ∏, ꝏ, ∞, ⁺, ₊, ⁻, ₋.
 			// Complex numbers: 𝑧, 𝑖, 𝑤, 𝑗, ℛℯ, ℐ𝓂, z̄, arg.
@@ -826,7 +1016,6 @@ void help_command() {
 		std::println("{}", i);
 	}
 	std::println("\033[0m");
-
 
 
 
