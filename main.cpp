@@ -632,8 +632,9 @@ class ExpressionConverter {
 			latex_text.push_back("}");
 			expr_converter(--index_field, latex_text, unicode_text);
 			latex_text.push_back("}{");
+			unicode_text.push_back(" / ");
 			expr_converter(--index_field, latex_text, unicode_text);
-			latex_text.push_back(" \\frac{");
+			latex_text.push_back("\\frac{");
 			break;
 		case NodeTags::NegativeNum:
 			expr_converter(--index_field, latex_text, unicode_text);
@@ -641,9 +642,9 @@ class ExpressionConverter {
 			unicode_text.push_back("−");
 			break;
 		case NodeTags::Percent:
+			latex_text.push_back("\\,\\%");
+			unicode_text.push_back("%");
 			expr_converter(--index_field, latex_text, unicode_text);
-			latex_text.push_back(" \\,\\%");
-			unicode_text.push_back("% ");
 			break;
 		case NodeTags::Power:
 			latex_text.push_back("}");
