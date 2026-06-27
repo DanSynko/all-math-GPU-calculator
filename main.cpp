@@ -1,10 +1,25 @@
-﻿#include "include/magic_enum-master/include/magic_enum/magic_enum.hpp"
+﻿#include <iostream>
+#include <print>
+#include <vector>
+#include <array>
+#include <string>
+#include <string_view>
+#include <iterator>
+#include <expected>
+#include <variant>
+#include <utility>
+#include <charconv>
+
+#include "include/magic_enum-master/include/magic_enum/magic_enum.hpp"
+
+#include <iomanip>
 
 #ifdef _WIN32
 #include <Windows.h>
 #endif
 
-import std;
+
+void help_command();
 
 
 namespace TextFormatter {
@@ -52,7 +67,6 @@ namespace TextFormatter {
 
 
 
-void help_command();
 
 
 
