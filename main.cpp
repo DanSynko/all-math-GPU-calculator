@@ -4,7 +4,22 @@
 #include <Windows.h>
 #endif
 
+#ifdef __INTELLISENSE__
+#include <iostream>
+#include <print>
+#include <vector>
+#include <array>
+#include <string>
+#include <string_view>
+#include <iterator>
+#include <expected>
+#include <variant>
+#include <utility>
+#include <charconv>
+#else
 import std;
+#endif
+
 
 
 namespace TextFormatter {
