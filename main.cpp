@@ -172,9 +172,10 @@ using bitmask = uint8_t;
 
 constexpr bitmask MASK_NUMBER = 1 << 0;
 constexpr bitmask MASK_OPERATOR = 1 << 1;
-constexpr bitmask MASK_PARENTHESIS = 1 << 2;
-constexpr bitmask MASK_FLOATING_POINT = 1 << 3;
-constexpr bitmask MASK_SPACE = 1 << 4;
+constexpr bitmask MASK_OPEN_PARENTHESIS = 1 << 2;
+constexpr bitmask MASK_CLOSE_PARENTHESIS = 1 << 3;
+constexpr bitmask MASK_FLOATING_POINT = 1 << 4;
+constexpr bitmask MASK_SPACE = 1 << 5;
 
 constexpr std::array<bitmask, 256> lookup_table_fill() {
 	std::array<bitmask, 256> symbols{};
@@ -194,8 +195,8 @@ constexpr std::array<bitmask, 256> lookup_table_fill() {
 	symbols['.'] = MASK_FLOATING_POINT;
 	symbols[','] = MASK_FLOATING_POINT;
 
-	symbols['('] = MASK_PARENTHESIS;
-	symbols[')'] = MASK_PARENTHESIS;
+	symbols['('] = MASK_OPEN_PARENTHESIS;
+	symbols[')'] = MASK_CLOSE_PARENTHESIS;
 
 	symbols[' '] = MASK_SPACE;
 
@@ -205,8 +206,8 @@ constexpr std::array<bitmask, 256> lookup_table_fill() {
 
 class Lexer {
 	static constexpr std::array<bitmask, 256> ascii_symbols = lookup_table_fill();
-	bitmask math_operators = MASK_OPERATOR | MASK_PARENTHESIS;
-	bitmask mask_negativesign = MASK_OPERATOR | MASK_PARENTHESIS | MASK_SPACE;
+	bitmask math_operators = MASK_OPERATOR;
+	bitmask mask_parentheses = MASK_OPEN_PARENTHESIS | MASK_CLOSE_PARENTHESIS;
 
 	ErrorHandler error_handler;
 
@@ -215,6 +216,8 @@ class Lexer {
 	int i;
 	bitmask current_symbol_type;
 	uint8_t current_symbol_value;
+
+	std::vector<Token> tokens;
 
 	std::expected<Token, TypeOfError> number_tokenization() {
 		Token number;
@@ -251,9 +254,19 @@ class Lexer {
 		return number;
 	}
 
-	SafeTokens tokenization() {
-		std::vector<Token> tokens;
+	bool is_negativesign() {
+		if (tokens.empty()) {
+			return true;
+		}
+		const char prev_symbol = tokens[tokens.size() - 1].value[0];
+		const bool is_prev_token_an_operator = (ascii_symbols[prev_symbol] & (math_operators | MASK_OPEN_PARENTHESIS));
+		if (is_prev_token_an_operator) {
+			return true;
+		}
+		return false;
+	}
 
+	SafeTokens tokenization() {
 		for (; it != expr.end(); ++it) {
 			current_symbol_value = static_cast<bitmask>(*it);
 			if (ascii_symbols[current_symbol_value] == 0) {
@@ -265,7 +278,7 @@ class Lexer {
 			current_symbol_type = ascii_symbols[current_symbol_value];
 			if (current_symbol_type & MASK_SPACE) continue;
 
-			if (current_symbol_type & math_operators) {
+			if (current_symbol_type & (math_operators | mask_parentheses)) {
 				Token a_operator;
 				switch (current_symbol_value) {
 				case '+':
@@ -273,7 +286,7 @@ class Lexer {
 					tokens.push_back(a_operator);
 					break;
 				case '-':
-					if (it == expr.begin() || (ascii_symbols[*(std::prev(it))] & mask_negativesign)) {
+					if (is_negativesign()) {
 						a_operator.setter(i, TypeOfToken::NegativeSign, '~');
 						tokens.push_back(a_operator);
 					}
