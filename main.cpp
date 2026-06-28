@@ -87,7 +87,7 @@ enum class TypeOfToken {
 };
 
 struct Token {
-	uint32_t index = 0;
+	int32_t index = 0;
 	TypeOfToken type = TypeOfToken::Default;
 	std::string value;
 
@@ -128,7 +128,7 @@ struct ErrorMessage {
 struct ErrorHandler {
 	std::vector<ErrorMessage> errors_list;
 
-	std::string error_message_templates(TypeOfError error_type) {
+	[[nodiscard]] std::string error_message_templates(TypeOfError error_type) {
 		switch (error_type) {
 		case TypeOfError::NoInput:
 			return "You haven't entered anything. Was this accidental?";
@@ -151,7 +151,7 @@ struct ErrorHandler {
 		}
 	}
 
-	std::vector<ErrorMessage> panic_mode(std::vector<Token>& tokens, int i, TypeOfError left_error, int defect_index) {
+	[[nodiscard]] std::vector<ErrorMessage> panic_mode(std::vector<Token>& tokens, int i, TypeOfError left_error, int defect_index) {
 		errors_list.push_back(ErrorMessage(tokens[defect_index], error_message_templates(left_error)));
 		while (tokens[i].type != TypeOfToken::EndOfFile) {
 			i++;
@@ -177,7 +177,7 @@ constexpr bitmask MASK_CLOSE_PARENTHESIS = 1 << 3;
 constexpr bitmask MASK_FLOATING_POINT = 1 << 4;
 constexpr bitmask MASK_SPACE = 1 << 5;
 
-constexpr std::array<bitmask, 256> lookup_table_fill() {
+[[nodiscard]] constexpr std::array<bitmask, 256> lookup_table_fill() {
 	std::array<bitmask, 256> symbols{};
 
 	for (int i = '0'; i <= '9'; ++i) {
@@ -219,7 +219,7 @@ class Lexer {
 
 	std::vector<Token> tokens;
 
-	std::expected<Token, TypeOfError> number_tokenization() {
+	[[nodiscard]] std::expected<Token, TypeOfError> number_tokenization() {
 		Token number;
 		bool has_point = false;
 
@@ -254,7 +254,7 @@ class Lexer {
 		return number;
 	}
 
-	bool is_negativesign() {
+	[[nodiscard]] bool is_negativesign() {
 		if (tokens.empty()) {
 			return true;
 		}
@@ -357,7 +357,7 @@ public:
 		current_symbol_value = 0;
 	}
 
-	LexerResult get_lexer_result() {
+	[[nodiscard]] LexerResult get_lexer_result() {
 		SafeTokens tokens;
 		tokens = tokenization();
 		if (tokens.has_value()) {
@@ -381,7 +381,7 @@ enum class NodeTags {
 	Percent
 };
 
-NodeTags typeoftoken_to_nodetags(TypeOfToken token_type) {
+[[nodiscard]] NodeTags typeoftoken_to_nodetags(TypeOfToken token_type) {
 	switch (token_type) {
 	case TypeOfToken::Number:
 		return NodeTags::Number;
@@ -414,17 +414,17 @@ NodeTags typeoftoken_to_nodetags(TypeOfToken token_type) {
 
 
 
-using SafeUint32t = std::expected<uint32_t, TypeOfError>;
+using SafeInt32t = std::expected<int32_t, TypeOfError>;
 
 
 struct AbstractSyntaxTree_SoA {
 	std::vector<NodeTags> node_tags;
 	std::vector<std::string> node_data;
-	std::vector<SafeUint32t> child_relationships;
+	std::vector<SafeInt32t> child_relationships;
 	std::vector<int32_t> child_start;
-	std::vector<uint32_t> child_count;
+	std::vector<int32_t> child_count;
 
-	uint32_t add_node(Token& some_token) {
+	[[nodiscard]] int32_t add_node(Token& some_token) {
 		node_tags.push_back(typeoftoken_to_nodetags(some_token.type));
 		node_data.push_back(some_token.value);
 		child_start.push_back(-1);
@@ -432,7 +432,7 @@ struct AbstractSyntaxTree_SoA {
 		return node_tags.size() - 1;
 	}
 
-	uint32_t add_node(Token& some_token, SafeUint32t right_child_index) {
+	[[nodiscard]] int32_t add_node(Token& some_token, SafeInt32t right_child_index) {
 		node_tags.push_back(typeoftoken_to_nodetags(some_token.type));
 		node_data.push_back(some_token.value);
 		child_start.push_back(child_relationships.size());
@@ -441,7 +441,7 @@ struct AbstractSyntaxTree_SoA {
 		return node_tags.size() - 1;
 	}
 
-	uint32_t add_node(Token& some_token, SafeUint32t left_child_index, SafeUint32t right_child_index) {
+	[[nodiscard]] int32_t add_node(Token& some_token, SafeInt32t left_child_index, SafeInt32t right_child_index) {
 		node_tags.push_back(typeoftoken_to_nodetags(some_token.type));
 		node_data.push_back(some_token.value);
 		child_start.push_back(child_relationships.size());
@@ -463,7 +463,7 @@ class PrattParser {
 	AbstractSyntaxTree_SoA ast;
 	ErrorHandler error_handler;
 
-	int lookahead_lbp(TypeOfToken token_type) const {
+	[[nodiscard]] int lookahead_lbp(TypeOfToken token_type) const {
 		switch (token_type) {
 		case TypeOfToken::Plus:
 		case TypeOfToken::Minus:
@@ -480,14 +480,14 @@ class PrattParser {
 		}
 	}
 
-	SafeUint32t NUD(Token& token) {
+	[[nodiscard]] SafeInt32t NUD(Token& token) {
 		if (token.type == TypeOfToken::NegativeSign) {
-			SafeUint32t operand = parse_expression(3);
+			SafeInt32t operand = parse_expression(3);
 			return ast.add_node(token, operand);
 		}
 		else if (token.type == TypeOfToken::OpenParenthesis) {
 			int current_openp_index = i;
-			SafeUint32t open_p = parse_expression(0);
+			SafeInt32t open_p = parse_expression(0);
 			if (tokens[i].type == TypeOfToken::CloseParenthesis) {
 				i++;
 			}
@@ -505,8 +505,8 @@ class PrattParser {
 		}
 	}
 
-	SafeUint32t LED(Token& token, SafeUint32t left) {
-		SafeUint32t right;
+	[[nodiscard]] SafeInt32t LED(Token& token, SafeInt32t left) {
+		SafeInt32t right;
 		switch (token.type) {
 		case TypeOfToken::PercentSign:
 			return ast.add_node(token, left);
@@ -524,7 +524,7 @@ class PrattParser {
 public:
 	PrattParser(std::vector<Token>& some_tokens) : tokens(some_tokens), current_index(0), openp_index(0) {}
 
-	SafeUint32t parse_expression(int rbp) {
+	SafeInt32t parse_expression(int rbp) {
 		if (i == tokens.size()) return 0;
 
 		Token current_token = tokens[i];
@@ -534,12 +534,9 @@ public:
 		auto left = NUD(current_token);
 		if (!left.has_value()) {
 			i--;
-			if (left.error() == TypeOfError::ParenthesesImbalance) {
-				std::vector<ErrorMessage> parse_errors = error_handler.panic_mode(tokens, i, left.error(), openp_index);
-			}
-			else {
-				std::vector<ErrorMessage> parse_errors = error_handler.panic_mode(tokens, i, left.error(), i);
-			}
+			int defect_index = (left.error() == TypeOfError::ParenthesesImbalance) ? openp_index : i;
+			std::vector<ErrorMessage> parse_errors = error_handler.panic_mode(tokens, i, left.error(), defect_index);
+
 			return std::unexpected(left.error());
 		}
 
@@ -552,7 +549,7 @@ public:
 		return left;
 	}
 
-	ParserResult get_parser_result() {
+	[[nodiscard]] ParserResult get_parser_result() {
 		if (!error_handler.errors_list.empty()) {
 			return std::move(error_handler.errors_list);
 		}
@@ -575,9 +572,8 @@ class ExpressionConverter {
 	std::string unicode_text_field;
 
 	bool parent_is_power = false;
-	bool parent_is_stronger = false;
 
-	std::string get_unicode_power_exponent(std::string& exponent) {
+	[[nodiscard]] std::string get_unicode_power_exponent(std::string& exponent) {
 		std::string exponent_expr;
 		for (int i = 0; i < exponent.size(); ++i) {
 			switch (exponent[i]) {
@@ -609,6 +605,10 @@ class ExpressionConverter {
 			return;
 		}
 
+		// Note: The SoA AST is built using post-order traversal, meaning the root node 
+		// is located at the end of the vector. Thus, nodes are processed in reverse 
+		// order (from end to start), causing the text to be assembled backwards. 
+		// The resulting string must be flipped using std::reverse inside to_latex_and_unicode_text().
 		switch (ast.node_tags[index_field]) {
 		case NodeTags::Add:
 			expr_converter(--index_field, latex_text, unicode_text);
@@ -665,6 +665,7 @@ class ExpressionConverter {
 
 		expr_converter(ast.child_start.size() - 1, latex_text_syntax, unicode_text);
 
+		// Restore the correct character sequence for the backwards-built AST string.
 		std::reverse(latex_text_syntax.begin(), latex_text_syntax.end());
 		std::reverse(unicode_text.begin(), unicode_text.end());
 
@@ -728,9 +729,9 @@ class IRGenerator {
 	AbstractSyntaxTree_SoA ast;
 
 	std::vector<IRInstruction> ir_instructions;
-	std::vector<SafeUint32t> operands_pool;
+	std::vector<SafeInt32t> operands_pool;
 
-	std::variant<int32_t, float, double> string_to_number(std::string_view string_const) {
+	[[nodiscard]] std::variant<int32_t, float, double> string_to_number(std::string_view string_const) {
 		std::variant<int32_t, float, double> to_number;
 		if (string_const.contains('.')) {
 			if (string_const.size() <= 7) {
@@ -760,7 +761,7 @@ class IRGenerator {
 		}
 	}
 
-	IRInstructionType get_type(const std::variant<int32_t, float, double>& numbered_payload) {
+	[[nodiscard]] IRInstructionType get_type(const std::variant<int32_t, float, double>& numbered_payload) {
 		IRInstructionType type;
 		std::visit([&](const auto& payload_type) {
 			using T = std::decay_t<decltype(payload_type)>;
@@ -779,7 +780,7 @@ class IRGenerator {
 		return type;
 	}
 
-	IRInstructionType get_type(IRInstructionType& left_child_type, IRInstructionType& right_child_type) {
+	[[nodiscard]] IRInstructionType get_type(IRInstructionType& left_child_type, IRInstructionType& right_child_type) {
 		if (left_child_type != right_child_type) {
 			if (right_child_type == IRInstructionType::i32) {
 				right_child_type = left_child_type;
@@ -803,7 +804,7 @@ class IRGenerator {
 		}
 	}
 
-	OpCode get_opcode(NodeTags node_tage) const {
+	[[nodiscard]] OpCode get_opcode(NodeTags node_tage) const {
 		switch (node_tage) {
 		case NodeTags::Add: return OpCode::add;
 		case NodeTags::Subtract: return OpCode::sub;
