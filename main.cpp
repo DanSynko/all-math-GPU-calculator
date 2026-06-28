@@ -213,9 +213,9 @@ class Lexer {
 
 	std::string_view expr;
 	std::string_view::const_iterator it;
-	int i;
-	bitmask current_symbol_type;
-	uint8_t current_symbol_value;
+	int i = 0;
+	bitmask current_symbol_type = 0;
+	uint8_t current_symbol_value = 0;
 
 	std::vector<Token> tokens;
 
@@ -351,11 +351,7 @@ class Lexer {
 		return tokens;
 	}
 public:
-
-	Lexer(std::string_view expr) : expr(expr), it(expr.begin()), i(0) {
-		current_symbol_type = 0;
-		current_symbol_value = 0;
-	}
+	Lexer(std::string_view expr) : expr(expr), it(expr.begin()) {}
 
 	[[nodiscard]] LexerResult get_lexer_result() {
 		SafeTokens tokens;
@@ -458,8 +454,8 @@ using ParserResult = std::variant<AbstractSyntaxTree_SoA, std::vector<ErrorMessa
 class PrattParser {
 	std::vector<Token> tokens;
 	int i = 0;
-	int current_index;
-	int openp_index;
+	int current_index = 0;
+	int openp_index = 0;
 	AbstractSyntaxTree_SoA ast;
 	ErrorHandler error_handler;
 
@@ -522,7 +518,7 @@ class PrattParser {
 	}
 
 public:
-	PrattParser(std::vector<Token>& some_tokens) : tokens(some_tokens), current_index(0), openp_index(0) {}
+	PrattParser(std::vector<Token>& some_tokens) : tokens(some_tokens) {}
 
 	SafeInt32t parse_expression(int rbp) {
 		if (i == tokens.size()) return 0;
@@ -685,9 +681,11 @@ class ExpressionConverter {
 		unicode_text_field = unicode_text_string;
 	}
 public:
-	ExpressionConverter(ParserResult& ast) {
-		this->ast = (std::get<AbstractSyntaxTree_SoA>(ast));
-		index_field = this->ast.child_start.size() - 1;
+	ExpressionConverter(ParserResult& ast)
+		: ast(std::get<AbstractSyntaxTree_SoA>(ast))
+		, index_field(this->ast.child_start.size() - 1) 
+	{
+
 	}
 
 	void expr_convert() {
@@ -816,9 +814,11 @@ class IRGenerator {
 		}
 	}
 public:
-	IRGenerator(ParserResult& ast) {
-		this->ast = std::get<AbstractSyntaxTree_SoA>(ast);
-		operands_pool = std::move(std::get<AbstractSyntaxTree_SoA>(ast).child_relationships);
+	IRGenerator(ParserResult& ast)
+		: ast(std::get<AbstractSyntaxTree_SoA>(ast))
+		, operands_pool(std::move(std::get<AbstractSyntaxTree_SoA>(ast).child_relationships))
+	{
+
 	}
 
 	void IR_generate() {
