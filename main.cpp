@@ -24,7 +24,7 @@ import std;
 
 namespace TextFormatter {
 
-	int get_screen_width() {
+	int get_screen_width() noexcept {
 #ifdef _WIN32
 		HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
 		CONSOLE_SCREEN_BUFFER_INFO csbi;
@@ -91,7 +91,7 @@ struct Token {
 	TypeOfToken type = TypeOfToken::Default;
 	std::string value;
 
-	void setter(int num, TypeOfToken current_type, auto iterator_value) {
+	void setter(int num, TypeOfToken current_type, auto iterator_value) noexcept {
 		type = current_type;
 		index = num;
 		value = iterator_value;
@@ -128,7 +128,7 @@ struct ErrorMessage {
 struct ErrorHandler {
 	std::vector<ErrorMessage> errors_list;
 
-	[[nodiscard]] std::string error_message_templates(TypeOfError error_type) {
+	[[nodiscard]] std::string error_message_templates(TypeOfError error_type) noexcept {
 		switch (error_type) {
 		case TypeOfError::NoInput:
 			return "You haven't entered anything. Was this accidental?";
@@ -177,7 +177,7 @@ constexpr bitmask MASK_CLOSE_PARENTHESIS = 1 << 3;
 constexpr bitmask MASK_FLOATING_POINT = 1 << 4;
 constexpr bitmask MASK_SPACE = 1 << 5;
 
-[[nodiscard]] constexpr std::array<bitmask, 256> lookup_table_fill() {
+[[nodiscard]] constexpr std::array<bitmask, 256> lookup_table_fill() noexcept {
 	std::array<bitmask, 256> symbols{};
 
 	for (int i = '0'; i <= '9'; ++i) {
@@ -254,7 +254,7 @@ class Lexer {
 		return number;
 	}
 
-	[[nodiscard]] bool is_negativesign() {
+	[[nodiscard]] bool is_negativesign() noexcept {
 		if (tokens.empty()) {
 			return true;
 		}
@@ -377,7 +377,7 @@ enum class NodeTags {
 	Percent
 };
 
-[[nodiscard]] NodeTags typeoftoken_to_nodetags(TypeOfToken token_type) {
+[[nodiscard]] NodeTags typeoftoken_to_nodetags(TypeOfToken token_type) noexcept {
 	switch (token_type) {
 	case TypeOfToken::Number:
 		return NodeTags::Number;
@@ -459,7 +459,7 @@ class PrattParser {
 	AbstractSyntaxTree_SoA ast;
 	ErrorHandler error_handler;
 
-	[[nodiscard]] int lookahead_lbp(TypeOfToken token_type) const {
+	[[nodiscard]] int lookahead_lbp(TypeOfToken token_type) const noexcept {
 		switch (token_type) {
 		case TypeOfToken::Plus:
 		case TypeOfToken::Minus:
@@ -729,7 +729,7 @@ class IRGenerator {
 	std::vector<IRInstruction> ir_instructions;
 	std::vector<SafeInt32t> operands_pool;
 
-	[[nodiscard]] std::variant<int32_t, float, double> string_to_number(std::string_view string_const) {
+	[[nodiscard]] std::variant<int32_t, float, double> string_to_number(std::string_view string_const) noexcept {
 		std::variant<int32_t, float, double> to_number;
 		if (string_const.contains('.')) {
 			if (string_const.size() <= 7) {
@@ -759,7 +759,7 @@ class IRGenerator {
 		}
 	}
 
-	[[nodiscard]] IRInstructionType get_type(const std::variant<int32_t, float, double>& numbered_payload) {
+	[[nodiscard]] IRInstructionType get_type(const std::variant<int32_t, float, double>& numbered_payload) noexcept {
 		IRInstructionType type;
 		std::visit([&](const auto& payload_type) {
 			using T = std::decay_t<decltype(payload_type)>;
@@ -778,7 +778,7 @@ class IRGenerator {
 		return type;
 	}
 
-	[[nodiscard]] IRInstructionType get_type(IRInstructionType& left_child_type, IRInstructionType& right_child_type) {
+	[[nodiscard]] IRInstructionType get_type(IRInstructionType& left_child_type, IRInstructionType& right_child_type) noexcept {
 		if (left_child_type != right_child_type) {
 			if (right_child_type == IRInstructionType::i32) {
 				right_child_type = left_child_type;
@@ -802,7 +802,7 @@ class IRGenerator {
 		}
 	}
 
-	[[nodiscard]] OpCode get_opcode(NodeTags node_tage) const {
+	[[nodiscard]] OpCode get_opcode(NodeTags node_tage) const noexcept {
 		switch (node_tage) {
 		case NodeTags::Add: return OpCode::add;
 		case NodeTags::Subtract: return OpCode::sub;
