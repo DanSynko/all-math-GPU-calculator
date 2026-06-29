@@ -128,7 +128,7 @@ struct ErrorMessage {
 struct ErrorHandler {
 	std::vector<ErrorMessage> errors_list;
 
-	[[nodiscard]] std::string error_message_templates(TypeOfError error_type) noexcept {
+	[[nodiscard]] std::string error_message_templates(TypeOfError error_type) const noexcept {
 		switch (error_type) {
 		case TypeOfError::NoInput:
 			return "You haven't entered anything. Was this accidental?";
@@ -151,7 +151,7 @@ struct ErrorHandler {
 		}
 	}
 
-	[[nodiscard]] std::vector<ErrorMessage> panic_mode(std::vector<Token>& tokens, int i, TypeOfError left_error, int defect_index) {
+	[[nodiscard]] std::vector<ErrorMessage> panic_mode(const std::vector<Token>& tokens, int i, TypeOfError left_error, int defect_index) {
 		errors_list.push_back(ErrorMessage(tokens[defect_index], error_message_templates(left_error)));
 		while (tokens[i].type != TypeOfToken::EndOfFile) {
 			i++;
@@ -254,7 +254,7 @@ class Lexer {
 		return number;
 	}
 
-	[[nodiscard]] bool is_negativesign() noexcept {
+	[[nodiscard]] bool is_negativesign() const noexcept {
 		if (tokens.empty()) {
 			return true;
 		}
@@ -420,7 +420,7 @@ struct AbstractSyntaxTree_SoA {
 	std::vector<int32_t> child_start;
 	std::vector<int32_t> child_count;
 
-	[[nodiscard]] int32_t add_node(Token& some_token) {
+	[[nodiscard]] int32_t add_node(const Token& some_token) {
 		node_tags.push_back(typeoftoken_to_nodetags(some_token.type));
 		node_data.push_back(some_token.value);
 		child_start.push_back(-1);
@@ -428,7 +428,7 @@ struct AbstractSyntaxTree_SoA {
 		return node_tags.size() - 1;
 	}
 
-	[[nodiscard]] int32_t add_node(Token& some_token, SafeInt32t right_child_index) {
+	[[nodiscard]] int32_t add_node(const Token& some_token, const SafeInt32t& right_child_index) {
 		node_tags.push_back(typeoftoken_to_nodetags(some_token.type));
 		node_data.push_back(some_token.value);
 		child_start.push_back(child_relationships.size());
@@ -437,7 +437,7 @@ struct AbstractSyntaxTree_SoA {
 		return node_tags.size() - 1;
 	}
 
-	[[nodiscard]] int32_t add_node(Token& some_token, SafeInt32t left_child_index, SafeInt32t right_child_index) {
+	[[nodiscard]] int32_t add_node(const Token& some_token, const SafeInt32t& left_child_index, const SafeInt32t& right_child_index) {
 		node_tags.push_back(typeoftoken_to_nodetags(some_token.type));
 		node_data.push_back(some_token.value);
 		child_start.push_back(child_relationships.size());
@@ -476,7 +476,7 @@ class PrattParser {
 		}
 	}
 
-	[[nodiscard]] SafeInt32t NUD(Token& token) {
+	[[nodiscard]] SafeInt32t NUD(const Token& token) {
 		if (token.type == TypeOfToken::NegativeSign) {
 			SafeInt32t operand = parse_expression(3);
 			return ast.add_node(token, operand);
@@ -501,7 +501,7 @@ class PrattParser {
 		}
 	}
 
-	[[nodiscard]] SafeInt32t LED(Token& token, SafeInt32t left) {
+	[[nodiscard]] SafeInt32t LED(const Token& token, const SafeInt32t& left) {
 		SafeInt32t right;
 		switch (token.type) {
 		case TypeOfToken::PercentSign:
@@ -518,7 +518,7 @@ class PrattParser {
 	}
 
 public:
-	PrattParser(std::vector<Token>& some_tokens) : tokens(some_tokens) {}
+	PrattParser(const std::vector<Token>& some_tokens) : tokens(some_tokens) {}
 
 	SafeInt32t parse_expression(int rbp) {
 		if (i == tokens.size()) return 0;
@@ -569,7 +569,7 @@ class ExpressionConverter {
 
 	bool parent_is_power = false;
 
-	[[nodiscard]] std::string get_unicode_power_exponent(std::string& exponent) {
+	[[nodiscard]] std::string get_unicode_power_exponent(const std::string& exponent) const {
 		std::string exponent_expr;
 		for (int i = 0; i < exponent.size(); ++i) {
 			switch (exponent[i]) {
@@ -681,7 +681,7 @@ class ExpressionConverter {
 		unicode_text_field = unicode_text_string;
 	}
 public:
-	ExpressionConverter(ParserResult& ast)
+	ExpressionConverter(const ParserResult& ast)
 		: ast(std::get<AbstractSyntaxTree_SoA>(ast))
 		, index_field(this->ast.child_start.size() - 1)
 	{
@@ -736,7 +736,7 @@ class IRGenerator {
 	int i = 0;
 	int32_t ssa_offset_from_casts = 0;
 
-	[[nodiscard]] PayloadType string_to_number(std::string_view string_const) noexcept {
+	[[nodiscard]] PayloadType string_to_number(std::string_view string_const) const noexcept {
 		PayloadType to_number;
 		if (string_const.contains('.')) {
 			if (string_const.size() <= 7) {
@@ -764,7 +764,7 @@ class IRGenerator {
 		return to_number;
 	}
 
-	void ssaindex_to_string(int32_t ssaindex, std::string& str) {
+	void ssaindex_to_string(int32_t ssaindex, std::string& str) const {
 		constexpr size_t max_chars = std::numeric_limits<int32_t>::digits10 + 2;
 		char buffer[max_chars];
 		auto [ptr, ec] = std::to_chars(buffer, buffer + max_chars, ssaindex);
@@ -773,7 +773,7 @@ class IRGenerator {
 		}
 	}
 
-	[[nodiscard]] IRInstructionType get_type(const PayloadType& numbered_payload) noexcept {
+	[[nodiscard]] IRInstructionType get_type(const PayloadType& numbered_payload) const noexcept {
 		IRInstructionType type;
 		std::visit([&](const auto& payload_type) {
 			using T = std::decay_t<decltype(payload_type)>;
@@ -927,8 +927,8 @@ public:
 			}
 		}
 	}
-	void IR_print() {
-		for (auto& i : ir_instructions) {
+	void IR_print() const {
+		for (const auto& i : ir_instructions) {
 			if (i.op_code == OpCode::itofp) {
 				int32_t sitofp_operand_ssa = std::get<int32_t>(i.payload);
 				std::println("v{} = itofp i32 v{} to {}",
