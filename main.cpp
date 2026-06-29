@@ -683,7 +683,7 @@ class ExpressionConverter {
 public:
 	ExpressionConverter(ParserResult& ast)
 		: ast(std::get<AbstractSyntaxTree_SoA>(ast))
-		, index_field(this->ast.child_start.size() - 1) 
+		, index_field(this->ast.child_start.size() - 1)
 	{
 
 	}
@@ -705,7 +705,9 @@ enum class OpCode {
 	div,
 	pow,
 	pct,
-	neg
+	neg,
+	itofp,
+	fpext
 };
 
 enum class IRInstructionType {
@@ -714,13 +716,16 @@ enum class IRInstructionType {
 	f64
 };
 
+using PayloadType = std::variant<std::monostate, int32_t, float, double>;
+
 struct IRInstruction {
+	PayloadType payload;
 	OpCode op_code;
+	IRInstructionType type;
 	int32_t ssa_index;
 	int32_t operands_start;
 	int32_t operands_count;
-	std::variant<int32_t, float, double> payload;
-	IRInstructionType type;
+	bool is_higher_precision = false;
 };
 
 class IRGenerator {
@@ -728,9 +733,11 @@ class IRGenerator {
 
 	std::vector<IRInstruction> ir_instructions;
 	std::vector<SafeInt32t> operands_pool;
+	int i = 0;
+	int32_t ssa_offset_from_casts = 0;
 
-	[[nodiscard]] std::variant<int32_t, float, double> string_to_number(std::string_view string_const) noexcept {
-		std::variant<int32_t, float, double> to_number;
+	[[nodiscard]] PayloadType string_to_number(std::string_view string_const) noexcept {
+		PayloadType to_number;
 		if (string_const.contains('.')) {
 			if (string_const.size() <= 7) {
 				to_number.emplace<float>();
@@ -744,7 +751,14 @@ class IRGenerator {
 		}
 
 		std::visit([&string_const](auto& val) {
-			std::from_chars(string_const.data(), string_const.data() + string_const.size(), val);
+			using T = std::decay_t<decltype(val)>;
+
+			if constexpr (std::is_same_v<T, std::monostate>) {
+				return;
+			}
+			else {
+				std::from_chars(string_const.data(), string_const.data() + string_const.size(), val);
+			}
 			}, to_number);
 
 		return to_number;
@@ -759,7 +773,7 @@ class IRGenerator {
 		}
 	}
 
-	[[nodiscard]] IRInstructionType get_type(const std::variant<int32_t, float, double>& numbered_payload) noexcept {
+	[[nodiscard]] IRInstructionType get_type(const PayloadType& numbered_payload) noexcept {
 		IRInstructionType type;
 		std::visit([&](const auto& payload_type) {
 			using T = std::decay_t<decltype(payload_type)>;
@@ -778,41 +792,96 @@ class IRGenerator {
 		return type;
 	}
 
-	[[nodiscard]] IRInstructionType get_type(IRInstructionType& left_child_type, IRInstructionType& right_child_type) noexcept {
-		if (left_child_type != right_child_type) {
-			if (right_child_type == IRInstructionType::i32) {
-				right_child_type = left_child_type;
-				return left_child_type;
-			}
-			else if (left_child_type == IRInstructionType::f64) {
-				right_child_type = IRInstructionType::f64;
-				return IRInstructionType::f64;
-			}
-			else if (left_child_type == IRInstructionType::i32) {
-				left_child_type = right_child_type;
-				return right_child_type;
-			}
-			else if (right_child_type == IRInstructionType::f64) {
-				left_child_type = IRInstructionType::f64;
-				return IRInstructionType::f64;
-			}
+	[[nodiscard]] bool right_child_is_higher_precision(const IRInstruction& left_child, const IRInstruction& right_child) const noexcept {
+		IRInstructionType left_child_type = left_child.type;
+		IRInstructionType right_child_type = right_child.type;
+
+		if (right_child_type == IRInstructionType::i32) {
+			return false;
 		}
-		else {
-			return right_child_type;
+		else if (left_child_type == IRInstructionType::f64) {
+			return false;
+		}
+		else if (left_child_type == IRInstructionType::i32) {
+			return true;
+		}
+		else if (right_child_type == IRInstructionType::f64) {
+			return true;
 		}
 	}
 
 	[[nodiscard]] OpCode get_opcode(NodeTags node_tage) const noexcept {
 		switch (node_tage) {
-		case NodeTags::Add: return OpCode::add;
-		case NodeTags::Subtract: return OpCode::sub;
-		case NodeTags::Multiply: return OpCode::mul;
-		case NodeTags::Divide: return OpCode::div;
-		case NodeTags::Power: return OpCode::pow;
+		case NodeTags::Add:			return OpCode::add;
+		case NodeTags::Subtract:	return OpCode::sub;
+		case NodeTags::Multiply:	return OpCode::mul;
+		case NodeTags::Divide:		return OpCode::div;
+		case NodeTags::Power:		return OpCode::pow;
 		case NodeTags::NegativeNum: return OpCode::neg;
-		case NodeTags::Percent: return OpCode::pct;
+		case NodeTags::Percent:		return OpCode::pct;
 		}
 	}
+
+	int32_t type_cast_IR_generate(IRInstruction& left_child, IRInstruction& right_child) {
+		if (right_child_is_higher_precision(left_child, right_child)) {
+			right_child.is_higher_precision = true;
+			OpCode opcode_of_cast = (left_child.type == IRInstructionType::i32) ? OpCode::itofp : OpCode::fpext;
+			ir_instructions.push_back(
+				IRInstruction(
+					left_child.ssa_index,
+					opcode_of_cast,
+					right_child.type,
+					i + ssa_offset_from_casts,
+					operands_pool[ast.child_start[i]].value(),
+					1,
+					true
+				)
+			);
+		}
+		else {
+			left_child.is_higher_precision = true;
+			OpCode opcode_of_cast = (right_child.type == IRInstructionType::i32) ? OpCode::itofp : OpCode::fpext;
+			ir_instructions.push_back(
+				IRInstruction(
+					right_child.ssa_index,
+					opcode_of_cast,
+					left_child.type,
+					i + ssa_offset_from_casts,
+					operands_pool[ast.child_start[i] + 1].value(),
+					1,
+					true
+				)
+			);
+		}
+		ssa_offset_from_casts++;
+		return ir_instructions.back().ssa_index;
+	}
+
+	void binary_op_IR_generate(IRInstruction& left_child, IRInstruction& right_child) {
+		int32_t new_operand;
+		if (left_child.type != right_child.type) {
+			new_operand = type_cast_IR_generate(left_child, right_child);
+			if (left_child.is_higher_precision) {
+				operands_pool[ast.child_start[i]+ 1] = ir_instructions[new_operand].ssa_index;
+				right_child.type = left_child.type;
+			}
+			else {
+				operands_pool[ast.child_start[i]] = ir_instructions[new_operand].ssa_index;
+				left_child.type = right_child.type;
+			}
+		}
+		ir_instructions.push_back(
+			IRInstruction(
+				std::monostate{},
+				get_opcode(ast.node_tags[i]),
+				left_child.type,
+				i + ssa_offset_from_casts,
+				ast.child_start[i],
+				2
+			)
+		);
+	}
+
 public:
 	IRGenerator(ParserResult& ast)
 		: ast(std::get<AbstractSyntaxTree_SoA>(ast))
@@ -822,30 +891,37 @@ public:
 	}
 
 	void IR_generate() {
-		for (int i = 0; i < ast.node_tags.size(); ++i) {
+		for (; i < ast.node_tags.size(); ++i) {
 			switch (ast.node_tags[i]) {
 			case NodeTags::Add:
 			case NodeTags::Subtract:
 			case NodeTags::Multiply:
 			case NodeTags::Divide:
 			case NodeTags::Power: {
-				ir_instructions.push_back(IRInstruction(get_opcode(ast.node_tags[i]), i, ast.child_start[i], 2));
-				auto& current_ir = ir_instructions.back();
-				IRInstructionType left_child_type = ir_instructions[operands_pool[current_ir.operands_start].value()].type;
-				IRInstructionType right_child_type = ir_instructions[operands_pool[current_ir.operands_start + 1].value()].type;
-				current_ir.type = get_type(left_child_type, right_child_type);
+				IRInstruction left_child = ir_instructions[operands_pool[ast.child_start[i]].value()];
+				IRInstruction right_child = ir_instructions[operands_pool[ast.child_start[i] + 1].value()];
+				binary_op_IR_generate(left_child, right_child);
 				continue;
 			}
 			case NodeTags::NegativeNum:
 			case NodeTags::Percent: {
-				ir_instructions.push_back(IRInstruction(get_opcode(ast.node_tags[i]), i, ast.child_start[i], 1));
+				ir_instructions.push_back(
+					IRInstruction(
+						std::monostate{},
+						get_opcode(ast.node_tags[i]), 
+						IRInstructionType::i32,
+						i + ssa_offset_from_casts, 
+						ast.child_start[i], 
+						1
+					)
+				);
 				auto& current_ir = ir_instructions.back();
 				current_ir.type = ir_instructions[operands_pool[current_ir.operands_start].value()].type;
 				continue;
 			}
 			case NodeTags::Number: {
 				auto numbered_payload = string_to_number(ast.node_data[i]);
-				ir_instructions.push_back(IRInstruction(OpCode::ldc, i, -1, 0, numbered_payload, get_type(numbered_payload)));
+				ir_instructions.push_back(IRInstruction(numbered_payload, OpCode::ldc, get_type(numbered_payload), i + ssa_offset_from_casts, -1, 0));
 				continue;
 			}
 			}
@@ -853,12 +929,35 @@ public:
 	}
 	void IR_print() {
 		for (auto& i : ir_instructions) {
-			std::print("v{} = {} {}", i.ssa_index, magic_enum::enum_name(i.op_code), magic_enum::enum_name(i.type));
+			if (i.op_code == OpCode::itofp) {
+				int32_t sitofp_operand_ssa = std::get<int32_t>(i.payload);
+				std::println("v{} = itofp i32 v{} to {}",
+					i.ssa_index,
+					sitofp_operand_ssa,
+					magic_enum::enum_name(i.type)
+				);
+				continue;
+			}
+			else if (i.op_code == OpCode::fpext) {
+				int32_t fpext_operand_ssa = std::get<int32_t>(i.payload);
+				std::println("v{} = fpext f32 v{} to f64", i.ssa_index, fpext_operand_ssa);
+				continue;
+			}
+			else {
+				std::print("v{} = {} {}", i.ssa_index, magic_enum::enum_name(i.op_code), magic_enum::enum_name(i.type));
+			}
 
 			switch (i.operands_count) {
 			case 0:
 				std::visit([&](const auto& val) {
-					std::println(" {}", val);
+					using T = std::decay_t<decltype(val)>;
+
+					if constexpr (std::is_same_v<T, std::monostate>) {
+						return;
+					}
+					else {
+						std::println(" {}", val);
+					}
 					}, i.payload);
 				break;
 			default: {
