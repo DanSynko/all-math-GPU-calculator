@@ -87,14 +87,26 @@ enum class TypeOfToken {
 };
 
 struct Token {
-	int32_t index = 0;
-	TypeOfToken type = TypeOfToken::Default;
+	int32_t index;
+	TypeOfToken type;
 	std::string value;
 
-	void setter(int num, TypeOfToken current_type, auto iterator_value) noexcept {
-		type = current_type;
-		index = num;
-		value = iterator_value;
+	Token() = default;
+
+	Token(int num, TypeOfToken type, std::string_view value)
+		: index(num)
+		, type(type)
+		, value(value)
+	{
+
+	}
+
+	Token(int num, TypeOfToken type, uint8_t single_char)
+		: index(num)
+		, type(type)
+		, value(1, static_cast<char>(single_char)) 
+	{
+
 	}
 
 	void print() const {
@@ -274,8 +286,7 @@ class Lexer {
 		for (; it != expr.end(); ++it) {
 			current_symbol_value = static_cast<bitmask>(*it);
 			if (ascii_symbols[current_symbol_value] == 0) {
-				Token defect_token;
-				defect_token.setter(i, TypeOfToken::Default, current_symbol_value);
+				Token defect_token(i, TypeOfToken::Default, current_symbol_value);
 				error_handler.error_register(defect_token, TypeOfError::UnknownSymbol);
 				return std::unexpected(TypeOfError::UnknownSymbol);
 			}
@@ -284,45 +295,35 @@ class Lexer {
 			if (current_symbol_type & MASK_SPACE) continue;
 
 			if (current_symbol_type & (math_operators | mask_parentheses)) {
-				Token a_operator;
 				switch (current_symbol_value) {
 				case '+':
-					a_operator.setter(i, TypeOfToken::Plus, current_symbol_value);
-					tokens.push_back(a_operator);
+					tokens.emplace_back(i, TypeOfToken::Plus, current_symbol_value);
 					break;
 				case '-':
 					if (is_negativesign()) {
-						a_operator.setter(i, TypeOfToken::NegativeSign, '~');
-						tokens.push_back(a_operator);
+						tokens.emplace_back(i, TypeOfToken::NegativeSign, '~');
 					}
 					else {
-						a_operator.setter(i, TypeOfToken::Minus, current_symbol_value);
-						tokens.push_back(a_operator);
+						tokens.emplace_back(i, TypeOfToken::Minus, current_symbol_value);
 					}
 					break;
 				case '*':
-					a_operator.setter(i, TypeOfToken::MultiplicationSign, current_symbol_value);
-					tokens.push_back(a_operator);
+					tokens.emplace_back(i, TypeOfToken::MultiplicationSign, current_symbol_value);
 					break;
 				case '/':
-					a_operator.setter(i, TypeOfToken::DivisionSign, current_symbol_value);
-					tokens.push_back(a_operator);
+					tokens.emplace_back(i, TypeOfToken::DivisionSign, current_symbol_value);
 					break;
 				case '(':
-					a_operator.setter(i, TypeOfToken::OpenParenthesis, current_symbol_value);
-					tokens.push_back(a_operator);
+					tokens.emplace_back(i, TypeOfToken::OpenParenthesis, current_symbol_value);
 					break;
 				case ')':
-					a_operator.setter(i, TypeOfToken::CloseParenthesis, current_symbol_value);
-					tokens.push_back(a_operator);
+					tokens.emplace_back(i, TypeOfToken::CloseParenthesis, current_symbol_value);
 					break;
 				case '%':
-					a_operator.setter(i, TypeOfToken::PercentSign, current_symbol_value);
-					tokens.push_back(a_operator);
+					tokens.emplace_back(i, TypeOfToken::PercentSign, current_symbol_value);
 					break;
 				case '^':
-					a_operator.setter(i, TypeOfToken::PowerSign, current_symbol_value);
-					tokens.push_back(a_operator);
+					tokens.emplace_back(i, TypeOfToken::PowerSign, current_symbol_value);
 					break;
 				default:
 					break;
@@ -331,8 +332,7 @@ class Lexer {
 			else if (current_symbol_type & MASK_NUMBER) {
 				std::expected<Token, TypeOfError> number = number_tokenization();
 				if (!number.has_value()) {
-					Token defect_number;
-					defect_number.setter(i, TypeOfToken::Default, current_symbol_value);
+					Token defect_number(i, TypeOfToken::Default, current_symbol_value);
 					error_handler.error_register(defect_number, TypeOfError::InvalidFloatingPoint);
 					return std::unexpected(TypeOfError::InvalidFloatingPoint);
 				}
@@ -344,9 +344,7 @@ class Lexer {
 			++i;
 		}
 
-		Token eof;
-		eof.setter(i, TypeOfToken::EndOfFile, '\0');
-		tokens.push_back(eof);
+		tokens.emplace_back(i, TypeOfToken::EndOfFile, '\0');
 
 		if (tokens[0].type == TypeOfToken::EndOfFile) {
 			error_handler.error_register(tokens[0], TypeOfError::NoInput);
