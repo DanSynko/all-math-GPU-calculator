@@ -272,6 +272,7 @@ class Lexer {
 			if (ascii_symbols[current_symbol_value] == 0) {
 				Token defect_token;
 				defect_token.setter(i, TypeOfToken::Default, current_symbol_value);
+				error_handler.errors_list.push_back(ErrorMessage(defect_token, error_handler.error_message_templates(TypeOfError::UnknownSymbol)));
 				return std::unexpected(TypeOfError::UnknownSymbol);
 			}
 
@@ -456,6 +457,8 @@ class PrattParser {
 	int i = 0;
 	int current_index = 0;
 	int openp_index = 0;
+	int expr_strings_count = 1;
+	int errors_count = 0;
 	AbstractSyntaxTree_SoA ast;
 	ErrorHandler error_handler;
 
@@ -496,6 +499,9 @@ class PrattParser {
 		else if (token.type == TypeOfToken::Number) {
 			return ast.add_node(token);
 		}
+		else if (token.type == TypeOfToken::EndOfFile) {
+			return std::unexpected(TypeOfError::UnexpectedEnd);
+		}
 		else {
 			return std::unexpected(TypeOfError::InvalidOperator);
 		}
@@ -518,7 +524,9 @@ class PrattParser {
 	}
 
 public:
-	PrattParser(const std::vector<Token>& some_tokens) : tokens(some_tokens) {}
+	PrattParser(const std::vector<Token>& some_tokens) : tokens(some_tokens) {
+		error_handler.errors_list.reserve(expr_strings_count);
+	}
 
 	SafeInt32t parse_expression(int rbp) {
 		if (i == tokens.size()) return 0;
@@ -530,9 +538,11 @@ public:
 		auto left = NUD(current_token);
 		if (!left.has_value()) {
 			i--;
-			int defect_index = (left.error() == TypeOfError::ParenthesesImbalance) ? openp_index : i;
-			std::vector<ErrorMessage> parse_errors = error_handler.panic_mode(tokens, i, left.error(), defect_index);
-
+			if (error_handler.errors_list.size() < expr_strings_count) {
+				int defect_index = (left.error() == TypeOfError::ParenthesesImbalance) ? openp_index : i;
+				std::vector<ErrorMessage> parse_errors = error_handler.panic_mode(tokens, i, left.error(), defect_index);
+				errors_count++;
+			}
 			return std::unexpected(left.error());
 		}
 
