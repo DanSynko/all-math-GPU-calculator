@@ -151,8 +151,12 @@ struct ErrorHandler {
 		}
 	}
 
+	void error_register(const Token& defect_token, TypeOfError error_type) {
+		errors_list.push_back(ErrorMessage(defect_token, error_message_templates(error_type)));
+	}
+
 	[[nodiscard]] std::vector<ErrorMessage> panic_mode(const std::vector<Token>& tokens, int i, TypeOfError left_error, int defect_index) {
-		errors_list.push_back(ErrorMessage(tokens[defect_index], error_message_templates(left_error)));
+		error_register(tokens[defect_index], left_error);
 		while (tokens[i].type != TypeOfToken::EndOfFile) {
 			i++;
 		}
@@ -272,7 +276,7 @@ class Lexer {
 			if (ascii_symbols[current_symbol_value] == 0) {
 				Token defect_token;
 				defect_token.setter(i, TypeOfToken::Default, current_symbol_value);
-				error_handler.errors_list.push_back(ErrorMessage(defect_token, error_handler.error_message_templates(TypeOfError::UnknownSymbol)));
+				error_handler.error_register(defect_token, TypeOfError::UnknownSymbol);
 				return std::unexpected(TypeOfError::UnknownSymbol);
 			}
 
@@ -329,7 +333,7 @@ class Lexer {
 				if (!number.has_value()) {
 					Token defect_number;
 					defect_number.setter(i, TypeOfToken::Default, current_symbol_value);
-					error_handler.errors_list.push_back(ErrorMessage(defect_number, error_handler.error_message_templates(TypeOfError::InvalidFloatingPoint)));
+					error_handler.error_register(defect_number, TypeOfError::InvalidFloatingPoint);
 					return std::unexpected(TypeOfError::InvalidFloatingPoint);
 				}
 				number->index = i;
@@ -345,7 +349,7 @@ class Lexer {
 		tokens.push_back(eof);
 
 		if (tokens[0].type == TypeOfToken::EndOfFile) {
-			error_handler.errors_list.push_back(ErrorMessage(tokens[0], error_handler.error_message_templates(TypeOfError::NoInput)));
+			error_handler.error_register(tokens[0], TypeOfError::NoInput);
 			return std::unexpected(TypeOfError::NoInput);
 		}
 
@@ -560,7 +564,7 @@ public:
 			return std::move(error_handler.errors_list);
 		}
 		else if (i != tokens.size() - 1) {
-			error_handler.errors_list.push_back(ErrorMessage(tokens[i], error_handler.error_message_templates(TypeOfError::UnexpectedEnd)));
+			error_handler.error_register(tokens[i], TypeOfError::UnexpectedEnd);
 			return std::move(error_handler.errors_list);
 		}
 		else {
