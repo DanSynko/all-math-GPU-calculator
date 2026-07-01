@@ -16,10 +16,37 @@
 #include <variant>
 #include <utility>
 #include <charconv>
+#include <fstream>
 #else
 import std;
 #endif
 
+using bitmask = uint8_t;
+
+struct Settings {
+	enum Bitmask : bitmask {
+		fast_math = 1 << 0
+	};
+
+	bitmask load_settings() {
+		std::ifstream out("config.txt");
+		bitmask loaded_settings = 0;
+		const bitmask default_settings = 0;
+
+		if (!out.is_open()) {
+			return default_settings;
+		}
+
+		std::string line;
+		while (std::getline(out, line)) {
+			if (line.contains("fast_math=true")) {
+				loaded_settings |= Bitmask::fast_math;
+			}
+		}
+
+		return loaded_settings;
+	}
+};
 
 
 namespace TextFormatter {
@@ -128,7 +155,8 @@ enum class TypeOfError {
 	InvalidOperator,
 	UnexpectedEnd,
 	InvalidPrefixOperator,
-	InvalidFloatingPoint
+	InvalidFloatingPoint,
+	DivByZero
 };
 
 struct ErrorMessage {
@@ -158,17 +186,23 @@ struct ErrorHandler {
 			return "The prefix-operator was detected after the operand. It must be before an operand.";
 		case TypeOfError::InvalidFloatingPoint:
 			return "An unexpected floating point was detected outside the operand, or there were two or more of them. It must be a single one and located inside the operand.";
+		case TypeOfError::DivByZero:
+			return "You cannot divide by zero.";
 		default:
 			return "Unknown error\n";
 		}
 	}
 
-	void error_register(const Token& defect_token, TypeOfError error_type) {
+	void token_error_register(const Token& defect_token, TypeOfError error_type) {
 		errors_list.push_back(ErrorMessage(defect_token, error_message_templates(error_type)));
 	}
 
+	void semantic_error_report(TypeOfError error_type) const {
+		std::println("\033[1;31m {} \033[0m", error_message_templates(error_type));
+	}
+
 	[[nodiscard]] std::vector<ErrorMessage> panic_mode(const std::vector<Token>& tokens, int i, TypeOfError left_error, int defect_index) {
-		error_register(tokens[defect_index], left_error);
+		token_error_register(tokens[defect_index], left_error);
 		while (tokens[i].type != TypeOfToken::EndOfFile) {
 			i++;
 		}
@@ -183,8 +217,6 @@ using LexerResult = std::variant<std::vector<Token>, std::vector<ErrorMessage>>;
 
 
 
-
-using bitmask = uint8_t;
 
 constexpr bitmask MASK_NUMBER = 1 << 0;
 constexpr bitmask MASK_OPERATOR = 1 << 1;
@@ -287,7 +319,7 @@ class Lexer {
 			current_symbol_value = static_cast<bitmask>(*it);
 			if (ascii_symbols[current_symbol_value] == 0) {
 				Token defect_token(i, TypeOfToken::Default, current_symbol_value);
-				error_handler.error_register(defect_token, TypeOfError::UnknownSymbol);
+				error_handler.token_error_register(defect_token, TypeOfError::UnknownSymbol);
 				return std::unexpected(TypeOfError::UnknownSymbol);
 			}
 
@@ -333,7 +365,7 @@ class Lexer {
 				std::expected<Token, TypeOfError> number = number_tokenization();
 				if (!number.has_value()) {
 					Token defect_number(i, TypeOfToken::Default, current_symbol_value);
-					error_handler.error_register(defect_number, TypeOfError::InvalidFloatingPoint);
+					error_handler.token_error_register(defect_number, TypeOfError::InvalidFloatingPoint);
 					return std::unexpected(TypeOfError::InvalidFloatingPoint);
 				}
 				number->index = i;
@@ -347,7 +379,7 @@ class Lexer {
 		tokens.emplace_back(i, TypeOfToken::EndOfFile, '\0');
 
 		if (tokens[0].type == TypeOfToken::EndOfFile) {
-			error_handler.error_register(tokens[0], TypeOfError::NoInput);
+			error_handler.token_error_register(tokens[0], TypeOfError::NoInput);
 			return std::unexpected(TypeOfError::NoInput);
 		}
 
@@ -557,12 +589,12 @@ public:
 		return left;
 	}
 
-	[[nodiscard]] ParserResult get_parser_result() {
+	[[nodiscard]] ParserResult get_parser_result() noexcept {
 		if (!error_handler.errors_list.empty()) {
 			return std::move(error_handler.errors_list);
 		}
 		else if (i != tokens.size() - 1) {
-			error_handler.error_register(tokens[i], TypeOfError::UnexpectedEnd);
+			error_handler.token_error_register(tokens[i], TypeOfError::UnexpectedEnd);
 			return std::move(error_handler.errors_list);
 		}
 		else {
@@ -719,7 +751,8 @@ enum class OpCode {
 	pct,
 	neg,
 	itofp,
-	fpext
+	fpext,
+	RET
 };
 
 enum class IRInstructionType {
@@ -737,6 +770,7 @@ struct IRInstruction {
 	int32_t ssa_index;
 	int32_t operands_start;
 	int32_t operands_count;
+	int32_t use_count;
 	bool is_higher_precision = false;
 };
 
@@ -838,47 +872,44 @@ class IRGenerator {
 		if (right_child_is_higher_precision(left_child, right_child)) {
 			right_child.is_higher_precision = true;
 			OpCode opcode_of_cast = (left_child.type == IRInstructionType::i32) ? OpCode::itofp : OpCode::fpext;
-			ir_instructions.push_back(
-				IRInstruction(
-					left_child.ssa_index,
-					opcode_of_cast,
-					right_child.type,
-					i + ssa_offset_from_casts,
-					operands_pool[ast.child_start[i]].value(),
-					1,
-					true
-				)
+			ir_instructions.emplace_back(
+				std::monostate{},
+				opcode_of_cast,
+				right_child.type,
+				i + ssa_offset_from_casts,
+				left_child.ssa_index,
+				1,
+				left_child.use_count,
+				true
 			);
 		}
 		else {
 			left_child.is_higher_precision = true;
 			OpCode opcode_of_cast = (right_child.type == IRInstructionType::i32) ? OpCode::itofp : OpCode::fpext;
-			ir_instructions.push_back(
-				IRInstruction(
-					right_child.ssa_index,
-					opcode_of_cast,
-					left_child.type,
-					i + ssa_offset_from_casts,
-					operands_pool[ast.child_start[i] + 1].value(),
-					1,
-					true
-				)
+			ir_instructions.emplace_back(
+				std::monostate{},
+				opcode_of_cast,
+				left_child.type,
+				i + ssa_offset_from_casts,
+				right_child.ssa_index,
+				1,
+				right_child.use_count,
+				true
 			);
 		}
 		ssa_offset_from_casts++;
-		return ir_instructions.back().ssa_index;
+		return static_cast<int32_t>(ir_instructions.size() - 1);
 	}
 
 	void binary_op_IR_generate(IRInstruction& left_child, IRInstruction& right_child) {
-		int32_t new_operand;
 		if (left_child.type != right_child.type) {
-			new_operand = type_cast_IR_generate(left_child, right_child);
+			int32_t new_operand = type_cast_IR_generate(left_child, right_child);
 			if (left_child.is_higher_precision) {
-				operands_pool[ast.child_start[i]+ 1] = ir_instructions[new_operand].ssa_index;
+				operands_pool[ast.child_start[i] + 1] = new_operand;
 				right_child.type = left_child.type;
 			}
 			else {
-				operands_pool[ast.child_start[i]] = ir_instructions[new_operand].ssa_index;
+				operands_pool[ast.child_start[i]] = new_operand;
 				left_child.type = right_child.type;
 			}
 		}
@@ -889,20 +920,27 @@ class IRGenerator {
 				left_child.type,
 				i + ssa_offset_from_casts,
 				ast.child_start[i],
-				2
+				2,
+				0
 			)
 		);
+		ir_instructions[ast.child_start[i]].use_count++;
+		ir_instructions[ast.child_start[i] + 1].use_count++;
 	}
 
 public:
-	IRGenerator(ParserResult& ast)
+	IRGenerator(const ParserResult& ast)
 		: ast(std::get<AbstractSyntaxTree_SoA>(ast))
 		, operands_pool(std::move(std::get<AbstractSyntaxTree_SoA>(ast).child_relationships))
 	{
 
 	}
 
-	void IR_generate() {
+	[[nodiscard]] std::vector<SafeInt32t> get_operands_pool() const noexcept {
+		return operands_pool;
+	}
+
+	[[nodiscard]] std::vector<IRInstruction> IR_generate() {
 		for (; i < ast.node_tags.size(); ++i) {
 			switch (ast.node_tags[i]) {
 			case NodeTags::Add:
@@ -927,38 +965,52 @@ public:
 						1
 					)
 				);
+				ir_instructions[ast.child_start[i]].use_count++;
+
 				auto& current_ir = ir_instructions.back();
 				current_ir.type = ir_instructions[operands_pool[current_ir.operands_start].value()].type;
 				continue;
 			}
 			case NodeTags::Number: {
 				auto numbered_payload = string_to_number(ast.node_data[i]);
-				ir_instructions.push_back(IRInstruction(numbered_payload, OpCode::ldc, get_type(numbered_payload), i + ssa_offset_from_casts, -1, 0));
+				ir_instructions.push_back(IRInstruction(numbered_payload, OpCode::ldc, get_type(numbered_payload), i + ssa_offset_from_casts, -1, 0, 0));
 				continue;
 			}
 			}
 		}
+
+		IRInstruction target_ret = ir_instructions.back();
+		ir_instructions.emplace_back(
+			std::monostate{},
+			OpCode::RET,
+			target_ret.type,
+			-1,
+			target_ret.ssa_index,
+			1,
+			0
+		);
+
+		return ir_instructions;
 	}
-	void IR_print() const {
+	void IR_print(const std::vector<IRInstruction>& ir_instructions) const {
 		for (const auto& i : ir_instructions) {
-			if (i.op_code == OpCode::itofp) {
-				int32_t sitofp_operand_ssa = std::get<int32_t>(i.payload);
-				std::println("v{} = itofp i32 v{} to {}",
-					i.ssa_index,
-					sitofp_operand_ssa,
-					magic_enum::enum_name(i.type)
+			if (i.op_code == OpCode::RET) {
+				std::println("{} v{}",
+					magic_enum::enum_name(i.op_code),
+					(ir_instructions.rbegin() + 1)->ssa_index
 				);
+				return;
+			}
+			else if (i.op_code == OpCode::itofp) {
+				std::println("v{} = itofp i32 v{} to {}", i.ssa_index, i.operands_start, magic_enum::enum_name(i.type));
 				continue;
 			}
-			else if (i.op_code == OpCode::fpext) {
-				int32_t fpext_operand_ssa = std::get<int32_t>(i.payload);
-				std::println("v{} = fpext f32 v{} to f64", i.ssa_index, fpext_operand_ssa);
+			else if (i.op_code == OpCode::fpext){
+				std::println("v{} = fpext f32 v{} to f64", i.ssa_index, i.operands_start);
 				continue;
-			}
-			else {
-				std::print("v{} = {} {}", i.ssa_index, magic_enum::enum_name(i.op_code), magic_enum::enum_name(i.type));
 			}
 
+			std::print("v{} = {} {}", i.ssa_index, magic_enum::enum_name(i.op_code), magic_enum::enum_name(i.type));
 			switch (i.operands_count) {
 			case 0:
 				std::visit([&](const auto& val) {
@@ -989,6 +1041,187 @@ public:
 };
 
 
+template<typename T>
+concept ConstantType = std::same_as<T, int32_t> ||
+					   std::same_as<T, float>   ||
+					   std::same_as<T, double>;
+class IROptimizer {
+public:
+	IROptimizer(const std::vector<IRInstruction>& ir_instructions, const std::vector<SafeInt32t>& instructions_operands_pool, bitmask settings)
+		: instructions(ir_instructions)
+		, operands_pool(instructions_operands_pool)
+		, current_settings(settings)
+	{
+
+	}
+
+	[[nodiscard]] std::expected<std::vector<IRInstruction>, TypeOfError> ir_optimize() {
+		for (auto& i : instructions) {
+			if (ascii_symbols[get_opcode_symbol(i.op_code)] & MASK_OPERATOR) {
+				switch (i.op_code) {
+				case OpCode::add:
+				case OpCode::sub:
+				case OpCode::mul:
+				case OpCode::div:
+				case OpCode::pow: {
+					auto correct_result = std::visit([this, &i](const auto& l, const auto& r) -> std::expected<PayloadType, TypeOfError> {
+						using LeftT = std::decay_t<decltype(l)>;
+						using RightT = std::decay_t<decltype(r)>;
+
+						if constexpr (ConstantType<LeftT> && std::same_as<LeftT, RightT>) {
+							return fold_constants<LeftT>(i.op_code, l, r);
+						}
+
+						return l;
+						}, instructions[operands_pool[i.operands_start].value()].payload, instructions[operands_pool[i.operands_start + 1].value()].payload);
+					if (!correct_result.has_value()) {
+						return std::unexpected(correct_result.error());
+					}
+					
+					if (!correct_result.has_value()) return std::unexpected(correct_result.error());
+
+					instructions[i.ssa_index].payload = correct_result.value();
+					instructions[i.ssa_index].op_code = OpCode::ldc;
+					instructions[i.ssa_index].operands_count = 0;
+					instructions[operands_pool[i.operands_start].value()].use_count = 0;
+					instructions[operands_pool[i.operands_start + 1].value()].use_count = 0;
+					break;
+				}
+				case OpCode::neg:
+				case OpCode::pct: {
+					auto correct_result = std::visit([this, &i](const auto& r) -> std::expected<PayloadType, TypeOfError> {
+						using RightT = std::decay_t<decltype(r)>;
+
+						if constexpr (ConstantType<RightT>) {
+							return this->fold_constants<RightT>(i.op_code, r);
+						}
+
+						return r;
+						}, instructions[operands_pool[i.operands_start].value()].payload);
+
+					instructions[i.ssa_index].payload = correct_result.value();
+					instructions[i.ssa_index].op_code = OpCode::ldc;
+					instructions[i.ssa_index].operands_count = 0;
+					instructions[operands_pool[i.operands_start].value()].use_count = 0;
+					break;
+				}
+				}
+			}
+			else if (!(ascii_symbols[get_opcode_symbol(i.op_code)] & MASK_NUMBER)) {
+				switch (i.op_code) {
+				case OpCode::itofp: {
+					auto& to_cast_payload = instructions[i.operands_start];
+					instructions[i.ssa_index].payload = static_cast<float>(std::get<int32_t>(to_cast_payload.payload));
+					to_cast_payload.use_count = 0;
+					instructions[i.ssa_index].op_code = OpCode::ldc;
+					instructions[i.ssa_index].operands_count = 0;
+					break;
+				}
+				case OpCode::fpext: {
+					auto& to_cast_payload = instructions[i.operands_start];
+					instructions[i.ssa_index].payload = static_cast<double>(std::get<float>(to_cast_payload.payload));
+					to_cast_payload.use_count = 0;
+					instructions[i.ssa_index].op_code = OpCode::ldc;
+					instructions[i.ssa_index].operands_count = 0;
+					break;
+				}
+				case OpCode::RET:
+					instructions[i.operands_start].use_count = 1;
+					break;
+				}
+			}
+		}
+
+		dead_code_elimination();
+
+		return instructions;
+	}
+
+	template<typename T>
+	[[nodiscard]] T get_constant_expression_result() const noexcept {
+		return std::visit([](const auto& res) -> T {
+			using result_t = std::decay_t<decltype(res)>;
+
+			if constexpr (std::is_same_v<result_t, std::monostate>) {
+				return T{};
+			}
+			else if constexpr (std::is_arithmetic_v<result_t>) {
+				return static_cast<T>(res);
+			}
+			else {
+				return T{};
+			}
+			}, (instructions.rbegin() + 1)->payload);
+	}
+
+
+private:
+	static constexpr std::array<bitmask, 256> ascii_symbols = lookup_table_fill();
+
+	bitmask current_settings;
+
+	std::vector<IRInstruction> instructions;
+	std::vector<IRInstruction> optimized_instructions;
+	std::vector<SafeInt32t> operands_pool;
+
+	ErrorHandler error_handler;
+
+	template<ConstantType T>
+	[[nodiscard]] std::expected<PayloadType, TypeOfError> fold_constants(OpCode op, T left_child, T right_child) const noexcept {
+		switch (op) {
+		case OpCode::add:
+			return left_child + right_child;
+			break;
+		case OpCode::sub:
+			return left_child - right_child;
+			break;
+		case OpCode::mul:
+			return left_child * right_child;
+			break;
+		case OpCode::div:
+			if (right_child == 0.0) return std::unexpected(TypeOfError::DivByZero);
+			return left_child / right_child;
+		case OpCode::pow:
+			return std::pow(left_child, right_child);
+		}
+	}
+
+	template<ConstantType T>
+	[[nodiscard]] PayloadType fold_constants(OpCode op, T right_child) const noexcept {
+		switch (op) {
+		case OpCode::neg:
+			return -right_child;
+		case OpCode::pct:
+			return right_child / 100.0;
+		}
+	}
+
+	void dead_code_elimination() {
+		for (auto i = instructions.begin(); i != instructions.end(); ) {
+			if (i->op_code != OpCode::RET && i->use_count == 0) {
+				i = instructions.erase(i);
+			}
+			else {
+				++i;
+			}
+		}
+	}
+
+	[[nodiscard]] uint8_t get_opcode_symbol(OpCode current_op) const noexcept {
+		switch (current_op) {
+		case OpCode::add: return '+';
+		case OpCode::sub: case OpCode::neg: return '-';
+		case OpCode::mul: return '*';
+		case OpCode::div: return '/';
+		case OpCode::pow: return '^';
+		case OpCode::pct: return '%';
+		}
+	}
+
+
+};
+
+
 int main()
 {
 #ifdef _WIN32
@@ -999,6 +1232,9 @@ int main()
 	std::println("Welcome to all-math-gpu-calculator! This project was created for performing calculations from basic arithmetic to advanced mathematics.)");
 	std::println("Enter: \n 1) 'exit' to close the program. \n 2) 'help' to show the expression printing guide and supported operators and symbols.\n");
 	std::println("The entered mathematical expression will be displayed in a clean mathematical format.\n");
+
+	Settings settings;
+	bitmask current_settings = settings.load_settings();
 
 	while (true) {
 		std::println("Enter any mathematical expression or command:");
@@ -1059,11 +1295,26 @@ int main()
 
 		TextFormatter::print_to_center("4. IR GENERATION.\n", 0);
 
-		std::vector<IRInstruction> ir_instructions;
-
 		IRGenerator ir_generator(soa_ast);
-		ir_generator.IR_generate();
-		ir_generator.IR_print();
+		std::vector<IRInstruction> instructions = ir_generator.IR_generate();
+		ir_generator.IR_print(instructions);
+		std::println();
+
+		TextFormatter::print_to_center("5. IR OPTIMIZATION.\n", 0);
+		IROptimizer ir_optimizer(std::move(instructions), std::move(ir_generator.get_operands_pool()), current_settings);
+		std::expected<std::vector<IRInstruction>, TypeOfError> optimized_ir = ir_optimizer.ir_optimize();
+		if (!optimized_ir.has_value()) {
+			std::println("\033[1;31m Math expression is invalid. The reason:");
+			error_handler.semantic_error_report(optimized_ir.error());
+			std::print("\033[0m");
+			continue;
+		}
+
+		ir_generator.IR_print(optimized_ir.value());
+
+		double result = ir_optimizer.get_constant_expression_result<double>();
+		TextFormatter::print_to_center("\033[32m 6. RESULT: ", 0);
+		TextFormatter::print_to_center(std::string(std::format("{}\033[0m\n", result)), 0);
 	}
 
 	return 0;
@@ -1131,7 +1382,24 @@ void help_command() {
 	std::println();
 
 
-	TextFormatter::print_header(" [ 3. 📓 NOTICES. ] ");
+
+	TextFormatter::print_header(" [ 3. ⚙ SETTINGS. ] ");
+
+	std::println("\033[36m FORMAT: [Settings name]        -        [value] \033[0m");
+	TextFormatter::print_divider("-");
+	std::println();
+	constexpr std::array settings_list = {
+		"Enable Fast Math mode            -          Apply algebraic simplifications using unsafe math optimizations (disregarding IEEE 754).",
+		"𝑥ʸ           -          x^y",
+	};
+	for (const auto& i : guide) {
+		std::println("{}", i);
+	}
+	std::println();
+
+
+
+	TextFormatter::print_header(" [ 4. 📓 NOTICES. ] ");
 	std::print("\033[36m");
 	constexpr std::array notices = {
 		"1) You can print negative numbers without parentheses even not at the beginning.",
