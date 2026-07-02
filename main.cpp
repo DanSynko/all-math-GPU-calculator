@@ -160,8 +160,8 @@ enum class TypeOfError {
 };
 
 struct ErrorMessage {
-	Token defect_token;
 	std::string message;
+	std::optional<Token> defect_token;
 };
 
 
@@ -194,11 +194,11 @@ struct ErrorHandler {
 	}
 
 	void token_error_register(const Token& defect_token, TypeOfError error_type) {
-		errors_list.push_back(ErrorMessage(defect_token, error_message_templates(error_type)));
+		errors_list.emplace_back(error_message_templates(error_type), defect_token);
 	}
 
-	void semantic_error_report(TypeOfError error_type) const {
-		std::println("\033[1;31m {} \033[0m", error_message_templates(error_type));
+	void semantic_error_register(TypeOfError error_type) {
+		errors_list.emplace_back(error_message_templates(error_type));
 	}
 
 	[[nodiscard]] std::vector<ErrorMessage> panic_mode(const std::vector<Token>& tokens, int i, TypeOfError left_error, int defect_index) {
@@ -209,13 +209,6 @@ struct ErrorHandler {
 		return errors_list;
 	}
 };
-
-
-
-using SafeTokens = std::expected<std::vector<Token>, TypeOfError>;
-using LexerResult = std::variant<std::vector<Token>, std::vector<ErrorMessage>>;
-
-
 
 
 constexpr bitmask MASK_NUMBER = 1 << 0;
@@ -251,6 +244,9 @@ constexpr bitmask MASK_SPACE = 1 << 5;
 	return symbols;
 }
 
+
+using SafeTokens = std::expected<std::vector<Token>, TypeOfError>;
+using LexerResult = std::expected<std::vector<Token>, std::vector<ErrorMessage>>;
 
 class Lexer {
 	static constexpr std::array<bitmask, 256> ascii_symbols = lookup_table_fill();
@@ -389,14 +385,11 @@ public:
 	Lexer(std::string_view expr) : expr(expr), it(expr.begin()) {}
 
 	[[nodiscard]] LexerResult get_lexer_result() {
-		SafeTokens tokens;
-		tokens = tokenization();
-		if (tokens.has_value()) {
-			return std::move(tokens.value());
+		SafeTokens tokens = tokenization();
+		if (!tokens.has_value()) {
+			return std::unexpected(std::move(error_handler.errors_list));
 		}
-		else {
-			return std::move(error_handler.errors_list);
-		}
+		return tokens.value();
 	}
 };
 
@@ -484,17 +477,19 @@ struct AbstractSyntaxTree_SoA {
 };
 
 
-using ParserResult = std::variant<AbstractSyntaxTree_SoA, std::vector<ErrorMessage>>;
+using ParserResult = std::expected<AbstractSyntaxTree_SoA, std::vector<ErrorMessage>>;
 
 class PrattParser {
 	std::vector<Token> tokens;
+	ParserResult ast;
+
+	ErrorHandler error_handler;
+
 	int i = 0;
 	int current_index = 0;
 	int openp_index = 0;
 	int expr_strings_count = 1;
 	int errors_count = 0;
-	AbstractSyntaxTree_SoA ast;
-	ErrorHandler error_handler;
 
 	[[nodiscard]] int lookahead_lbp(TypeOfToken token_type) const noexcept {
 		switch (token_type) {
@@ -516,7 +511,7 @@ class PrattParser {
 	[[nodiscard]] SafeInt32t NUD(const Token& token) {
 		if (token.type == TypeOfToken::NegativeSign) {
 			SafeInt32t operand = parse_expression(3);
-			return ast.add_node(token, operand);
+			return ast.value().add_node(token, operand);
 		}
 		else if (token.type == TypeOfToken::OpenParenthesis) {
 			int current_openp_index = i;
@@ -531,7 +526,7 @@ class PrattParser {
 			return open_p;
 		}
 		else if (token.type == TypeOfToken::Number) {
-			return ast.add_node(token);
+			return ast.value().add_node(token);
 		}
 		else if (token.type == TypeOfToken::EndOfFile) {
 			return std::unexpected(TypeOfError::UnexpectedEnd);
@@ -545,15 +540,15 @@ class PrattParser {
 		SafeInt32t right;
 		switch (token.type) {
 		case TypeOfToken::PercentSign:
-			return ast.add_node(token, left);
+			return ast.value().add_node(token, left);
 		case TypeOfToken::PowerSign:
 			right = parse_expression(lookahead_lbp(token.type) - 1);
-			return ast.add_node(token, left, right);
+			return ast.value().add_node(token, left, right);
 		case TypeOfToken::NegativeSign:
 			return std::unexpected(TypeOfError::InvalidPrefixOperator);
 		default:
 			right = parse_expression(lookahead_lbp(token.type));
-			return ast.add_node(token, left, right);
+			return ast.value().add_node(token, left, right);
 		}
 	}
 
@@ -590,16 +585,14 @@ public:
 	}
 
 	[[nodiscard]] ParserResult get_parser_result() noexcept {
-		if (!error_handler.errors_list.empty()) {
-			return std::move(error_handler.errors_list);
-		}
-		else if (i != tokens.size() - 1) {
+		SafeInt32t parser_result = parse_expression(0);
+		if (i != tokens.size() - 1) {
 			error_handler.token_error_register(tokens[i], TypeOfError::UnexpectedEnd);
-			return std::move(error_handler.errors_list);
 		}
-		else {
-			return std::move(ast);
+		if (!error_handler.errors_list.empty()) {
+			return std::unexpected(error_handler.errors_list);
 		}
+		return ast;
 	}
 };
 
@@ -726,7 +719,7 @@ class ExpressionConverter {
 	}
 public:
 	ExpressionConverter(const ParserResult& ast)
-		: ast(std::get<AbstractSyntaxTree_SoA>(ast))
+		: ast(ast.value())
 		, index_field(this->ast.child_start.size() - 1)
 	{
 
@@ -930,8 +923,8 @@ class IRGenerator {
 
 public:
 	IRGenerator(const ParserResult& ast)
-		: ast(std::get<AbstractSyntaxTree_SoA>(ast))
-		, operands_pool(std::move(std::get<AbstractSyntaxTree_SoA>(ast).child_relationships))
+		: ast(ast.value())
+		, operands_pool(ast.value().child_relationships)
 	{
 
 	}
@@ -1055,7 +1048,8 @@ public:
 
 	}
 
-	[[nodiscard]] std::expected<std::vector<IRInstruction>, TypeOfError> ir_optimize() {
+	using OptimizerResult = std::expected<std::vector<IRInstruction>, TypeOfError>;
+	[[nodiscard]] OptimizerResult ir_optimize() {
 		for (auto& i : instructions) {
 			if (ascii_symbols[get_opcode_symbol(i.op_code)] & MASK_OPERATOR) {
 				switch (i.op_code) {
@@ -1074,9 +1068,6 @@ public:
 
 						return l;
 						}, instructions[operands_pool[i.operands_start].value()].payload, instructions[operands_pool[i.operands_start + 1].value()].payload);
-					if (!correct_result.has_value()) {
-						return std::unexpected(correct_result.error());
-					}
 					
 					if (!correct_result.has_value()) return std::unexpected(correct_result.error());
 
@@ -1138,7 +1129,12 @@ public:
 	}
 
 	template<typename T>
-	[[nodiscard]] T get_constant_expression_result() const noexcept {
+	[[nodiscard]] std::expected <T, std::vector<ErrorMessage>> get_constant_expression_result(const OptimizerResult& optimized_ir) {
+		if (!optimized_ir.has_value()) {
+			error_handler.semantic_error_register(optimized_ir.error());
+			return std::unexpected(std::move(error_handler.errors_list));
+		}
+
 		return std::visit([](const auto& res) -> T {
 			using result_t = std::decay_t<decltype(res)>;
 
@@ -1253,68 +1249,67 @@ int main()
 			break;
 		}
 
-		Lexer lexer(m_expr);
-		LexerResult tokens = lexer.get_lexer_result();
+		Lexer lexer(std::move(m_expr));
 
-		if (std::holds_alternative<std::vector<ErrorMessage>>(tokens)) {
-			std::println("\033[1;31m Math expression is invalid. The unexpected tokens:");
-			for (auto& it : std::get<std::vector<ErrorMessage>>(tokens)) {
-				it.defect_token.print();
-				std::println("{}\033[0m\n", it.message);
-			}
-			continue;
-		}
+		std::expected<double, std::vector<ErrorMessage>> program_pipeline = lexer.get_lexer_result()
+			.transform([](const std::vector<Token>& correct_tokens) {
+				std::println("┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐");
+				TextFormatter::print_to_center("1. TOKENS", 0);
 
-		std::println("┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐");
-		TextFormatter::print_to_center("1. TOKENS", 0);
-		for (const Token& token : std::get<std::vector<Token>>(tokens)) {
-			token.print();
-		}
-		std::println();
+				for (const Token& token : correct_tokens) {
+					token.print();
+				}
+				std::println();
 
-		TextFormatter::print_to_center("2. ABSTRACT SYNTAX TREE VALIDATION.", 0);
-		PrattParser parser(std::get<std::vector<Token>>(tokens));
-		parser.parse_expression(0);
-		ParserResult soa_ast = parser.get_parser_result();
+				return correct_tokens;
+			})
+			.and_then([](const std::vector<Token>& correct_tokens) {
+				TextFormatter::print_to_center("2. ABSTRACT SYNTAX TREE VALIDATION.", 0);
 
-		if (std::holds_alternative<std::vector<ErrorMessage>>(soa_ast)) {
-			std::println("\033[1;31m Math expression is invalid. The unexpected tokens:");
-			for (auto& it : std::get<std::vector<ErrorMessage>>(soa_ast)) {
-				it.defect_token.print();
-				std::println("{}\033[0m\n\n", it.message);
-			}
-			continue;
-		}
-		else {
-			std::println("\033[32m Math expression is valid!\033[0m");
-		}
-		TextFormatter::print_to_center("3. LATEX- AND UNICODE TEXT.\n", 0);
-		ExpressionConverter converter(soa_ast);
-		converter.expr_convert();
-		std::println();
+				PrattParser parser(correct_tokens);
 
-		TextFormatter::print_to_center("4. IR GENERATION.\n", 0);
+				return parser.get_parser_result();
+			})
+			.transform([](const AbstractSyntaxTree_SoA& soa_ast) {
+				std::println("\033[32m Math expression is valid!\033[0m");
 
-		IRGenerator ir_generator(soa_ast);
-		std::vector<IRInstruction> instructions = ir_generator.IR_generate();
-		ir_generator.IR_print(instructions);
-		std::println();
+				TextFormatter::print_to_center("3. LATEX- AND UNICODE TEXT.\n", 0);
+				ExpressionConverter converter(soa_ast);
+				converter.expr_convert();
+				std::println();
 
-		TextFormatter::print_to_center("5. IR OPTIMIZATION.\n", 0);
-		IROptimizer ir_optimizer(std::move(instructions), std::move(ir_generator.get_operands_pool()), current_settings);
-		std::expected<std::vector<IRInstruction>, TypeOfError> optimized_ir = ir_optimizer.ir_optimize();
-		if (!optimized_ir.has_value()) {
-			std::println("\033[1;31m Math expression is invalid. The reason:");
-			error_handler.semantic_error_report(optimized_ir.error());
-			std::print("\033[0m");
-			continue;
-		}
+				return soa_ast;
+			})
+			.and_then([current_settings](const AbstractSyntaxTree_SoA& soa_ast) {
+				TextFormatter::print_to_center("4. IR GENERATION.\n", 0);
 
-		ir_generator.IR_print(optimized_ir.value());
+				IRGenerator ir_generator(soa_ast);
+				std::vector<IRInstruction> instructions = ir_generator.IR_generate();
+				ir_generator.IR_print(instructions);
+				std::println();
 
-		double result = ir_optimizer.get_constant_expression_result<double>();
+				TextFormatter::print_to_center("5. IR OPTIMIZATION.\n", 0);
+				IROptimizer ir_optimizer(std::move(instructions), std::move(ir_generator.get_operands_pool()), current_settings);
+				auto optimized_ir = ir_optimizer.ir_optimize();
+				ir_generator.IR_print(std::move(optimized_ir).value_or(std::vector<IRInstruction>{}));
+
+				return ir_optimizer.get_constant_expression_result<double>(optimized_ir);
+			})
+			.transform_error([](const std::vector<ErrorMessage>& errors) {
+				std::println("\033[1;31m Math expression is invalid. Reason:");
+				for (const auto& it : errors) {
+					if (it.defect_token.has_value()) {
+						it.defect_token->print();
+					}
+					std::println("{}\033[0m\n", it.message);
+				}
+				return errors;
+			});
+
+		if (!program_pipeline.has_value()) continue;
+
 		TextFormatter::print_to_center("\033[32m 6. RESULT: ", 0);
-		TextFormatter::print_to_center(std::string(std::format("{}\033[0m\n", result)), 0);
+		TextFormatter::print_to_center(std::string(std::format("{}\033[0m\n", program_pipeline.value())), 0);
 	}
 
 	return 0;
