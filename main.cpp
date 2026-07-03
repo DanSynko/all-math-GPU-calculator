@@ -243,8 +243,7 @@ constexpr bitmask MASK_SPACE = 1 << 5;
 }
 
 
-using SafeTokens = std::expected<std::vector<Token>, TypeOfError>;
-using LexerResult = std::expected<std::vector<Token>, std::vector<ErrorMessage>>;
+using SafeTokens = std::expected<std::vector<Token>, std::vector<ErrorMessage>>;
 
 class Lexer {
 	static constexpr std::array<bitmask, 256> ascii_symbols = lookup_table_fill();
@@ -258,8 +257,6 @@ class Lexer {
 	int i = 0;
 	bitmask current_symbol_type = 0;
 	uint8_t current_symbol_value = 0;
-
-	std::vector<Token> tokens;
 
 	[[nodiscard]] std::expected<Token, TypeOfError> number_tokenization() {
 		Token number;
@@ -296,7 +293,7 @@ class Lexer {
 		return number;
 	}
 
-	[[nodiscard]] bool is_negativesign() const noexcept {
+	[[nodiscard]] bool is_negativesign(const std::vector<Token>& tokens) const noexcept {
 		if (tokens.empty()) {
 			return true;
 		}
@@ -305,13 +302,18 @@ class Lexer {
 		return is_prev_token_an_operator;
 	}
 
-	SafeTokens tokenization() {
+public:
+	Lexer(std::string_view expr) : expr(expr), it(expr.begin()) {}
+
+	[[nodiscard]] SafeTokens tokenization() {
+		std::vector<Token> tokens;
+
 		for (; it != expr.end(); ++it) {
 			current_symbol_value = static_cast<bitmask>(*it);
 			if (ascii_symbols[current_symbol_value] == 0) {
 				Token defect_token(i, TypeOfToken::Default, current_symbol_value);
 				error_handler.token_error_register(defect_token, TypeOfError::UnknownSymbol);
-				return std::unexpected(TypeOfError::UnknownSymbol);
+				break;
 			}
 
 			current_symbol_type = ascii_symbols[current_symbol_value];
@@ -323,7 +325,7 @@ class Lexer {
 					tokens.emplace_back(i, TypeOfToken::Plus, current_symbol_value);
 					break;
 				case '-':
-					if (is_negativesign()) {
+					if (is_negativesign(tokens)) {
 						tokens.emplace_back(i, TypeOfToken::NegativeSign, '~');
 					}
 					else {
@@ -355,7 +357,7 @@ class Lexer {
 				if (!number.has_value()) {
 					Token defect_number(i, TypeOfToken::Default, current_symbol_value);
 					error_handler.token_error_register(defect_number, TypeOfError::InvalidFloatingPoint);
-					return std::unexpected(TypeOfError::InvalidFloatingPoint);
+					break;
 				}
 				number->index = i;
 				number->type = TypeOfToken::Number;
@@ -365,25 +367,20 @@ class Lexer {
 			++i;
 		}
 
+		if (!error_handler.errors_list.empty()) {
+			return std::unexpected(std::move(error_handler.errors_list));
+		}
+
 		tokens.emplace_back(i, TypeOfToken::EndOfFile, '\0');
 
 		if (tokens[0].type == TypeOfToken::EndOfFile) {
 			error_handler.token_error_register(tokens[0], TypeOfError::NoInput);
-			return std::unexpected(TypeOfError::NoInput);
-		}
-
-		return tokens;
-	}
-public:
-	Lexer(std::string_view expr) : expr(expr), it(expr.begin()) {}
-
-	[[nodiscard]] LexerResult get_lexer_result() {
-		SafeTokens tokens = tokenization();
-		if (!tokens.has_value()) {
 			return std::unexpected(std::move(error_handler.errors_list));
 		}
-		return tokens.value();
-	}
+
+
+		return tokens;
+	}	
 };
 
 enum class NodeTags {
@@ -493,12 +490,12 @@ class PrattParser {
 
 	[[nodiscard]] SafeInt32t NUD(const Token& token) {
 		if (token.type == TypeOfToken::NegativeSign) {
-			SafeInt32t operand = parse_expression(3);
+			SafeInt32t operand = start_pratt_parser(3);
 			return ast.value().add_node(token, operand);
 		}
 		else if (token.type == TypeOfToken::OpenParenthesis) {
 			int current_openp_index = i;
-			SafeInt32t open_p = parse_expression(0);
+			SafeInt32t open_p = start_pratt_parser(0);
 			if (tokens[i].type == TypeOfToken::CloseParenthesis) {
 				i++;
 			}
@@ -525,12 +522,12 @@ class PrattParser {
 		case TypeOfToken::PercentSign:
 			return ast.value().add_node(token, left);
 		case TypeOfToken::PowerSign:
-			right = parse_expression(lookahead_lbp(token.type) - 1);
+			right = start_pratt_parser(lookahead_lbp(token.type) - 1);
 			return ast.value().add_node(token, left, right);
 		case TypeOfToken::NegativeSign:
 			return std::unexpected(TypeOfError::InvalidPrefixOperator);
 		default:
-			right = parse_expression(lookahead_lbp(token.type));
+			right = start_pratt_parser(lookahead_lbp(token.type));
 			return ast.value().add_node(token, left, right);
 		}
 	}
@@ -540,14 +537,14 @@ public:
 		error_handler.errors_list.reserve(expr_strings_count);
 	}
 
-	SafeInt32t parse_expression(int rbp) {
+	SafeInt32t start_pratt_parser(int rbp) {
 		if (i == tokens.size()) return 0;
 
 		Token current_token = tokens[i];
 
 		i++;
 
-		auto left = NUD(current_token);
+		SafeInt32t left = NUD(current_token);
 		if (!left.has_value()) {
 			i--;
 			if (error_handler.errors_list.size() < expr_strings_count) {
@@ -567,12 +564,13 @@ public:
 		return left;
 	}
 
-	[[nodiscard]] ParserResult get_parser_result() noexcept {
-		SafeInt32t parser_result = parse_expression(0);
+	[[nodiscard]] ParserResult parse() {
+		start_pratt_parser(0);
+		if (!error_handler.errors_list.empty()) {
+			return std::unexpected(error_handler.errors_list);
+		}
 		if (i != tokens.back().index) {
 			error_handler.token_error_register(tokens[i], TypeOfError::UnexpectedEnd);
-		}
-		if (!error_handler.errors_list.empty()) {
 			return std::unexpected(error_handler.errors_list);
 		}
 		return ast;
@@ -1234,7 +1232,7 @@ int main()
 
 		Lexer lexer(std::move(m_expr));
 
-		std::expected<double, std::vector<ErrorMessage>> program_pipeline = lexer.get_lexer_result()
+		std::expected<double, std::vector<ErrorMessage>> program_pipeline = lexer.tokenization()
 			.transform([](const std::vector<Token>& correct_tokens) {
 				std::println("┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐");
 				TextFormatter::print_to_center("1. TOKENS", 0);
@@ -1251,7 +1249,7 @@ int main()
 
 				PrattParser parser(correct_tokens);
 
-				return parser.get_parser_result();
+				return parser.parse();
 			})
 			.transform([](const AbstractSyntaxTree_SoA& soa_ast) {
 				std::println("\033[32m Math expression is valid!\033[0m");
