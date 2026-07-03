@@ -49,7 +49,7 @@ struct Settings {
 };
 
 
-namespace TextFormatter {
+namespace Console {
 
 	int get_screen_width() noexcept {
 #ifdef _WIN32
@@ -67,9 +67,9 @@ namespace TextFormatter {
 
 	void print_header(std::string_view text, std::string_view header_element = "█", std::string_view color = "\033[33m") {
 		std::print("{}", color);
-		TextFormatter::print_divider(header_element, TextFormatter::get_screen_width() / 3);
+		Console::print_divider(header_element, Console::get_screen_width() / 3);
 		std::print("{}", text);
-		TextFormatter::print_divider(header_element, TextFormatter::get_screen_width() / 3);
+		Console::print_divider(header_element, Console::get_screen_width() / 3);
 		std::println("\033[0m \n");
 	}
 
@@ -94,7 +94,7 @@ namespace TextFormatter {
 
 
 
-void help_command();
+void print_help();
 
 
 
@@ -105,7 +105,7 @@ enum class TypeOfToken {
 	Minus,
 	MultiplicationSign,
 	DivisionSign,
-	NegativeSign,
+	NegationSign,
 	OpenParenthesis,
 	CloseParenthesis,
 	PowerSign,
@@ -166,10 +166,10 @@ struct ErrorMessage {
 
 
 struct ErrorHandler {
-	std::vector<ErrorMessage> errors_list;
+	std::vector<ErrorMessage> messages;
 
-	[[nodiscard]] std::string error_message_templates(TypeOfError error_type) const noexcept {
-		switch (error_type) {
+	[[nodiscard]] std::string get_message(TypeOfError type) const noexcept {
+		switch (type) {
 		case TypeOfError::NoInput:
 			return "You haven't entered anything. Was this accidental?";
 		case TypeOfError::UnknownSymbol:
@@ -191,20 +191,20 @@ struct ErrorHandler {
 		}
 	}
 
-	void token_error_register(const Token& defect_token, TypeOfError error_type) {
-		errors_list.emplace_back(error_message_templates(error_type), defect_token);
+	void register_token(const Token& defect_token, TypeOfError error_type) {
+		messages.emplace_back(get_message(error_type), defect_token);
 	}
 
-	void semantic_error_register(TypeOfError error_type) {
-		errors_list.emplace_back(error_message_templates(error_type));
+	void register_semantic(TypeOfError error_type) {
+		messages.emplace_back(get_message(error_type));
 	}
 
 	[[nodiscard]] std::vector<ErrorMessage> panic_mode(const std::vector<Token>& tokens, int i, TypeOfError left_error, int defect_index) {
-		token_error_register(tokens[defect_index], left_error);
+		register_token(tokens[defect_index], left_error);
 		while (tokens[i].type != TypeOfToken::EndOfFile) {
 			i++;
 		}
-		return errors_list;
+		return messages;
 	}
 };
 
@@ -258,7 +258,7 @@ class Lexer {
 	bitmask current_symbol_type = 0;
 	uint8_t current_symbol_value = 0;
 
-	[[nodiscard]] std::expected<Token, TypeOfError> number_tokenization() {
+	[[nodiscard]] std::expected<Token, TypeOfError> number_tokenize() {
 		Token number;
 		bool has_point = false;
 
@@ -293,7 +293,7 @@ class Lexer {
 		return number;
 	}
 
-	[[nodiscard]] bool is_negativesign(const std::vector<Token>& tokens) const noexcept {
+	[[nodiscard]] bool is_negationsign(const std::vector<Token>& tokens) const noexcept {
 		if (tokens.empty()) {
 			return true;
 		}
@@ -305,14 +305,14 @@ class Lexer {
 public:
 	Lexer(std::string_view expr) : expr(expr), it(expr.begin()) {}
 
-	[[nodiscard]] SafeTokens tokenization() {
+	[[nodiscard]] SafeTokens tokenize() {
 		std::vector<Token> tokens;
 
 		for (; it != expr.end(); ++it) {
 			current_symbol_value = static_cast<bitmask>(*it);
 			if (ascii_symbols[current_symbol_value] == 0) {
 				Token defect_token(i, TypeOfToken::Default, current_symbol_value);
-				error_handler.token_error_register(defect_token, TypeOfError::UnknownSymbol);
+				error_handler.register_token(defect_token, TypeOfError::UnknownSymbol);
 				break;
 			}
 
@@ -325,8 +325,8 @@ public:
 					tokens.emplace_back(i, TypeOfToken::Plus, current_symbol_value);
 					break;
 				case '-':
-					if (is_negativesign(tokens)) {
-						tokens.emplace_back(i, TypeOfToken::NegativeSign, '~');
+					if (is_negationsign(tokens)) {
+						tokens.emplace_back(i, TypeOfToken::NegationSign, '~');
 					}
 					else {
 						tokens.emplace_back(i, TypeOfToken::Minus, current_symbol_value);
@@ -353,10 +353,10 @@ public:
 				}
 			}
 			else if (current_symbol_type & MASK_NUMBER) {
-				std::expected<Token, TypeOfError> number = number_tokenization();
+				std::expected<Token, TypeOfError> number = number_tokenize();
 				if (!number.has_value()) {
 					Token defect_number(i, TypeOfToken::Default, current_symbol_value);
-					error_handler.token_error_register(defect_number, TypeOfError::InvalidFloatingPoint);
+					error_handler.register_token(defect_number, TypeOfError::InvalidFloatingPoint);
 					break;
 				}
 				number->index = i;
@@ -367,15 +367,15 @@ public:
 			++i;
 		}
 
-		if (!error_handler.errors_list.empty()) {
-			return std::unexpected(std::move(error_handler.errors_list));
+		if (!error_handler.messages.empty()) {
+			return std::unexpected(std::move(error_handler.messages));
 		}
 
 		tokens.emplace_back(i, TypeOfToken::EndOfFile, '\0');
 
 		if (tokens[0].type == TypeOfToken::EndOfFile) {
-			error_handler.token_error_register(tokens[0], TypeOfError::NoInput);
-			return std::unexpected(std::move(error_handler.errors_list));
+			error_handler.register_token(tokens[0], TypeOfError::NoInput);
+			return std::unexpected(std::move(error_handler.messages));
 		}
 
 
@@ -383,36 +383,36 @@ public:
 	}	
 };
 
-enum class NodeTags {
+enum class TypeOfNode {
 	Unknown,
 	Number,
-	Add,
-	Subtract,
-	Multiply,
-	Divide,
-	NegativeNum,
+	Addition,
+	Subtraction,
+	Multiplication,
+	Division,
+	Negation,
 	Power,
 	Percent
 };
 
-[[nodiscard]] NodeTags typeoftoken_to_nodetags(TypeOfToken token_type) noexcept {
+[[nodiscard]] TypeOfNode typeoftoken_to_typeofnode(TypeOfToken token_type) noexcept {
 	switch (token_type) {
 	case TypeOfToken::Number:
-		return NodeTags::Number;
+		return TypeOfNode::Number;
 	case TypeOfToken::Plus:
-		return NodeTags::Add;
+		return TypeOfNode::Addition;
 	case TypeOfToken::Minus:
-		return NodeTags::Subtract;
+		return TypeOfNode::Subtraction;
 	case TypeOfToken::MultiplicationSign:
-		return NodeTags::Multiply;
+		return TypeOfNode::Multiplication;
 	case TypeOfToken::DivisionSign:
-		return NodeTags::Divide;
-	case TypeOfToken::NegativeSign:
-		return NodeTags::NegativeNum;
+		return TypeOfNode::Division;
+	case TypeOfToken::NegationSign:
+		return TypeOfNode::Negation;
 	case TypeOfToken::PowerSign:
-		return NodeTags::Power;
+		return TypeOfNode::Power;
 	case TypeOfToken::PercentSign:
-		return NodeTags::Percent;
+		return TypeOfNode::Percent;
 	}
 }
 
@@ -422,37 +422,37 @@ using SafeInt32t = std::expected<int32_t, TypeOfError>;
 
 
 struct AbstractSyntaxTree_SoA {
-	std::vector<NodeTags> node_tags;
+	std::vector<TypeOfNode> node_types;
 	std::vector<std::string> node_data;
 	std::vector<SafeInt32t> child_relationships;
 	std::vector<int32_t> child_start;
 	std::vector<int32_t> child_count;
 
-	[[nodiscard]] int32_t add_node(const Token& some_token) {
-		node_tags.push_back(typeoftoken_to_nodetags(some_token.type));
-		node_data.push_back(some_token.value);
+	[[nodiscard]] int32_t add_node(const Token& token) {
+		node_types.push_back(typeoftoken_to_typeofnode(token.type));
+		node_data.push_back(token.value);
 		child_start.push_back(-1);
 		child_count.push_back(0);
-		return node_tags.size() - 1;
+		return node_types.size() - 1;
 	}
 
-	[[nodiscard]] int32_t add_node(const Token& some_token, const SafeInt32t& right_child_index) {
-		node_tags.push_back(typeoftoken_to_nodetags(some_token.type));
-		node_data.push_back(some_token.value);
+	[[nodiscard]] int32_t add_node(const Token& token, const SafeInt32t& right_child_index) {
+		node_types.push_back(typeoftoken_to_typeofnode(token.type));
+		node_data.push_back(token.value);
 		child_start.push_back(child_relationships.size());
 		child_count.push_back(1);
 		child_relationships.push_back(right_child_index);
-		return node_tags.size() - 1;
+		return node_types.size() - 1;
 	}
 
-	[[nodiscard]] int32_t add_node(const Token& some_token, const SafeInt32t& left_child_index, const SafeInt32t& right_child_index) {
-		node_tags.push_back(typeoftoken_to_nodetags(some_token.type));
-		node_data.push_back(some_token.value);
+	[[nodiscard]] int32_t add_node(const Token& token, const SafeInt32t& left_child_index, const SafeInt32t& right_child_index) {
+		node_types.push_back(typeoftoken_to_typeofnode(token.type));
+		node_data.push_back(token.value);
 		child_start.push_back(child_relationships.size());
 		child_count.push_back(2);
 		child_relationships.push_back(left_child_index);
 		child_relationships.push_back(right_child_index);
-		return node_tags.size() - 1;
+		return node_types.size() - 1;
 	}
 };
 
@@ -489,7 +489,7 @@ class PrattParser {
 	}
 
 	[[nodiscard]] SafeInt32t NUD(const Token& token) {
-		if (token.type == TypeOfToken::NegativeSign) {
+		if (token.type == TypeOfToken::NegationSign) {
 			SafeInt32t operand = start_pratt_parser(3);
 			return ast.value().add_node(token, operand);
 		}
@@ -524,7 +524,7 @@ class PrattParser {
 		case TypeOfToken::PowerSign:
 			right = start_pratt_parser(lookahead_lbp(token.type) - 1);
 			return ast.value().add_node(token, left, right);
-		case TypeOfToken::NegativeSign:
+		case TypeOfToken::NegationSign:
 			return std::unexpected(TypeOfError::InvalidPrefixOperator);
 		default:
 			right = start_pratt_parser(lookahead_lbp(token.type));
@@ -534,7 +534,7 @@ class PrattParser {
 
 public:
 	PrattParser(const std::vector<Token>& some_tokens) : tokens(some_tokens) {
-		error_handler.errors_list.reserve(expr_strings_count);
+		error_handler.messages.reserve(expr_strings_count);
 	}
 
 	SafeInt32t start_pratt_parser(int rbp) {
@@ -547,7 +547,7 @@ public:
 		SafeInt32t left = NUD(current_token);
 		if (!left.has_value()) {
 			i--;
-			if (error_handler.errors_list.size() < expr_strings_count) {
+			if (error_handler.messages.size() < expr_strings_count) {
 				int defect_index = (left.error() == TypeOfError::ParenthesesImbalance) ? openp_index : i;
 				std::vector<ErrorMessage> parse_errors = error_handler.panic_mode(tokens, i, left.error(), defect_index);
 				errors_count++;
@@ -566,12 +566,12 @@ public:
 
 	[[nodiscard]] ParserResult parse() {
 		start_pratt_parser(0);
-		if (!error_handler.errors_list.empty()) {
-			return std::unexpected(error_handler.errors_list);
+		if (!error_handler.messages.empty()) {
+			return std::unexpected(error_handler.messages);
 		}
 		if (i != tokens.back().index) {
-			error_handler.token_error_register(tokens[i], TypeOfError::UnexpectedEnd);
-			return std::unexpected(error_handler.errors_list);
+			error_handler.register_token(tokens[i], TypeOfError::UnexpectedEnd);
+			return std::unexpected(error_handler.messages);
 		}
 		return ast;
 	}
@@ -623,26 +623,26 @@ class ExpressionConverter {
 		// is located at the end of the vector. Thus, nodes are processed in reverse 
 		// order (from end to start), causing the text to be assembled backwards. 
 		// The resulting string must be flipped using std::reverse inside to_latex_and_unicode_text().
-		switch (ast.node_tags[index_field]) {
-		case NodeTags::Add:
+		switch (ast.node_types[index_field]) {
+		case TypeOfNode::Addition:
 			expr_converter(--index_field, latex_text, unicode_text);
 			latex_text.push_back(" + ");
 			unicode_text.push_back(parent_is_power ? "⁺" : " + ");
 			expr_converter(--index_field, latex_text, unicode_text);
 			break;
-		case NodeTags::Subtract:
+		case TypeOfNode::Subtraction:
 			expr_converter(--index_field, latex_text, unicode_text);
 			latex_text.push_back(" − ");
 			unicode_text.push_back(parent_is_power ? "⁻" : " − ");
 			expr_converter(--index_field, latex_text, unicode_text);
 			break;
-		case NodeTags::Multiply:
+		case TypeOfNode::Multiplication:
 			expr_converter(--index_field, latex_text, unicode_text);
 			latex_text.push_back(" \\cdot ");
 			unicode_text.push_back(" ⋅ ");
 			expr_converter(--index_field, latex_text, unicode_text);
 			break;
-		case NodeTags::Divide:
+		case TypeOfNode::Division:
 			latex_text.push_back("}");
 			expr_converter(--index_field, latex_text, unicode_text);
 			latex_text.push_back("}{");
@@ -650,17 +650,17 @@ class ExpressionConverter {
 			expr_converter(--index_field, latex_text, unicode_text);
 			latex_text.push_back("\\frac{");
 			break;
-		case NodeTags::NegativeNum:
+		case TypeOfNode::Negation:
 			expr_converter(--index_field, latex_text, unicode_text);
 			latex_text.push_back("−");
 			unicode_text.push_back("−");
 			break;
-		case NodeTags::Percent:
+		case TypeOfNode::Percent:
 			latex_text.push_back("\\,\\%");
 			unicode_text.push_back("%");
 			expr_converter(--index_field, latex_text, unicode_text);
 			break;
-		case NodeTags::Power:
+		case TypeOfNode::Power:
 			latex_text.push_back("}");
 			parent_is_power = true;
 			expr_converter(--index_field, latex_text, unicode_text);
@@ -708,8 +708,8 @@ public:
 
 	void expr_convert() {
 		to_latex_and_unicode_text();
-		TextFormatter::print_to_center(latex_text_field, 0);
-		TextFormatter::print_to_center(unicode_text_field, 0);
+		Console::print_to_center(latex_text_field, 0);
+		Console::print_to_center(unicode_text_field, 0);
 	}
 };
 
@@ -739,7 +739,7 @@ using PayloadType = std::variant<std::monostate, int32_t, float, double>;
 
 struct IRInstruction {
 	PayloadType payload;
-	OpCode op_code;
+	OpCode opcode;
 	IRInstructionType type;
 	int32_t ssa_index;
 	int32_t operands_start;
@@ -756,10 +756,10 @@ class IRGenerator {
 	int i = 0;
 	int32_t ssa_offset_from_casts = 0;
 
-	[[nodiscard]] PayloadType string_to_number(std::string_view string_const) const noexcept {
+	[[nodiscard]] PayloadType string_to_number(std::string_view literal) const noexcept {
 		PayloadType to_number;
-		if (string_const.contains('.')) {
-			if (string_const.size() <= 7) {
+		if (literal.contains('.')) {
+			if (literal.size() <= 7) {
 				to_number.emplace<float>();
 			}
 			else {
@@ -770,14 +770,14 @@ class IRGenerator {
 			to_number.emplace<int32_t>();
 		}
 
-		std::visit([&string_const](auto& val) {
+		std::visit([&literal](auto& val) {
 			using T = std::decay_t<decltype(val)>;
 
 			if constexpr (std::is_same_v<T, std::monostate>) {
 				return;
 			}
 			else {
-				std::from_chars(string_const.data(), string_const.data() + string_const.size(), val);
+				std::from_chars(literal.data(), literal.data() + literal.size(), val);
 			}
 			}, to_number);
 
@@ -793,7 +793,7 @@ class IRGenerator {
 		}
 	}
 
-	[[nodiscard]] IRInstructionType get_type(const PayloadType& numbered_payload) const noexcept {
+	[[nodiscard]] IRInstructionType get_type(const PayloadType& payload_value) const noexcept {
 		IRInstructionType type;
 		std::visit([&](const auto& payload_type) {
 			using T = std::decay_t<decltype(payload_type)>;
@@ -807,7 +807,7 @@ class IRGenerator {
 			else if constexpr (std::is_same_v<T, double>) {
 				type = IRInstructionType::f64;
 			}
-			}, numbered_payload);
+			}, payload_value);
 
 		return type;
 	}
@@ -830,15 +830,15 @@ class IRGenerator {
 		}
 	}
 
-	[[nodiscard]] OpCode get_opcode(NodeTags node_tage) const noexcept {
-		switch (node_tage) {
-		case NodeTags::Add:			return OpCode::add;
-		case NodeTags::Subtract:	return OpCode::sub;
-		case NodeTags::Multiply:	return OpCode::mul;
-		case NodeTags::Divide:		return OpCode::div;
-		case NodeTags::Power:		return OpCode::pow;
-		case NodeTags::NegativeNum: return OpCode::neg;
-		case NodeTags::Percent:		return OpCode::pct;
+	[[nodiscard]] OpCode get_opcode(TypeOfNode node_type) const noexcept {
+		switch (node_type) {
+		case TypeOfNode::Addition:			return OpCode::add;
+		case TypeOfNode::Subtraction:		return OpCode::sub;
+		case TypeOfNode::Multiplication:	return OpCode::mul;
+		case TypeOfNode::Division:			return OpCode::div;
+		case TypeOfNode::Power:				return OpCode::pow;
+		case TypeOfNode::Negation:			return OpCode::neg;
+		case TypeOfNode::Percent:			return OpCode::pct;
 		}
 	}
 
@@ -890,7 +890,7 @@ class IRGenerator {
 		ir_instructions.push_back(
 			IRInstruction(
 				std::monostate{},
-				get_opcode(ast.node_tags[i]),
+				get_opcode(ast.node_types[i]),
 				left_child.type,
 				i + ssa_offset_from_casts,
 				ast.child_start[i],
@@ -914,25 +914,25 @@ public:
 		return operands_pool;
 	}
 
-	[[nodiscard]] std::vector<IRInstruction> IR_generate() {
-		for (; i < ast.node_tags.size(); ++i) {
-			switch (ast.node_tags[i]) {
-			case NodeTags::Add:
-			case NodeTags::Subtract:
-			case NodeTags::Multiply:
-			case NodeTags::Divide:
-			case NodeTags::Power: {
+	[[nodiscard]] std::vector<IRInstruction> generate() {
+		for (; i < ast.node_types.size(); ++i) {
+			switch (ast.node_types[i]) {
+			case TypeOfNode::Addition:
+			case TypeOfNode::Subtraction:
+			case TypeOfNode::Multiplication:
+			case TypeOfNode::Division:
+			case TypeOfNode::Power: {
 				IRInstruction left_child = ir_instructions[operands_pool[ast.child_start[i]].value()];
 				IRInstruction right_child = ir_instructions[operands_pool[ast.child_start[i] + 1].value()];
 				binary_op_IR_generate(left_child, right_child);
 				continue;
 			}
-			case NodeTags::NegativeNum:
-			case NodeTags::Percent: {
+			case TypeOfNode::Negation:
+			case TypeOfNode::Percent: {
 				ir_instructions.push_back(
 					IRInstruction(
 						std::monostate{},
-						get_opcode(ast.node_tags[i]), 
+						get_opcode(ast.node_types[i]), 
 						IRInstructionType::i32,
 						i + ssa_offset_from_casts, 
 						ast.child_start[i], 
@@ -945,7 +945,7 @@ public:
 				current_ir.type = ir_instructions[operands_pool[current_ir.operands_start].value()].type;
 				continue;
 			}
-			case NodeTags::Number: {
+			case TypeOfNode::Number: {
 				auto numbered_payload = string_to_number(ast.node_data[i]);
 				ir_instructions.push_back(IRInstruction(numbered_payload, OpCode::ldc, get_type(numbered_payload), i + ssa_offset_from_casts, -1, 0, 0));
 				continue;
@@ -966,25 +966,25 @@ public:
 
 		return ir_instructions;
 	}
-	void IR_print(const std::vector<IRInstruction>& ir_instructions) const {
+	void print(const std::vector<IRInstruction>& ir_instructions) const {
 		for (const auto& i : ir_instructions) {
-			if (i.op_code == OpCode::RET) {
+			if (i.opcode == OpCode::RET) {
 				std::println("{} v{}",
-					magic_enum::enum_name(i.op_code),
+					magic_enum::enum_name(i.opcode),
 					(ir_instructions.rbegin() + 1)->ssa_index
 				);
 				return;
 			}
-			else if (i.op_code == OpCode::itofp) {
+			else if (i.opcode == OpCode::itofp) {
 				std::println("v{} = itofp i32 v{} to {}", i.ssa_index, i.operands_start, magic_enum::enum_name(i.type));
 				continue;
 			}
-			else if (i.op_code == OpCode::fpext){
+			else if (i.opcode == OpCode::fpext){
 				std::println("v{} = fpext f32 v{} to f64", i.ssa_index, i.operands_start);
 				continue;
 			}
 
-			std::print("v{} = {} {}", i.ssa_index, magic_enum::enum_name(i.op_code), magic_enum::enum_name(i.type));
+			std::print("v{} = {} {}", i.ssa_index, magic_enum::enum_name(i.opcode), magic_enum::enum_name(i.type));
 			switch (i.operands_count) {
 			case 0:
 				std::visit([&](const auto& val) {
@@ -1030,10 +1030,10 @@ public:
 	}
 
 	using OptimizerResult = std::expected<std::vector<IRInstruction>, TypeOfError>;
-	[[nodiscard]] OptimizerResult ir_optimize() {
+	[[nodiscard]] OptimizerResult optimize() {
 		for (auto& i : instructions) {
-			if (ascii_symbols[get_opcode_symbol(i.op_code)] & MASK_OPERATOR) {
-				switch (i.op_code) {
+			if (ascii_symbols[get_opcode_symbol(i.opcode)] & MASK_OPERATOR) {
+				switch (i.opcode) {
 				case OpCode::add:
 				case OpCode::sub:
 				case OpCode::mul:
@@ -1044,7 +1044,7 @@ public:
 						using RightT = std::decay_t<decltype(r)>;
 
 						if constexpr (ConstantType<LeftT> && std::same_as<LeftT, RightT>) {
-							return fold_constants<LeftT>(i.op_code, l, r);
+							return fold_constants<LeftT>(i.opcode, l, r);
 						}
 
 						return l;
@@ -1053,7 +1053,7 @@ public:
 					if (!correct_result.has_value()) return std::unexpected(correct_result.error());
 
 					instructions[i.ssa_index].payload = correct_result.value();
-					instructions[i.ssa_index].op_code = OpCode::ldc;
+					instructions[i.ssa_index].opcode = OpCode::ldc;
 					instructions[i.ssa_index].operands_count = 0;
 					instructions[operands_pool[i.operands_start].value()].use_count = 0;
 					instructions[operands_pool[i.operands_start + 1].value()].use_count = 0;
@@ -1065,27 +1065,27 @@ public:
 						using RightT = std::decay_t<decltype(r)>;
 
 						if constexpr (ConstantType<RightT>) {
-							return this->fold_constants<RightT>(i.op_code, r);
+							return this->fold_constants<RightT>(i.opcode, r);
 						}
 
 						return r;
 						}, instructions[operands_pool[i.operands_start].value()].payload);
 
 					instructions[i.ssa_index].payload = correct_result.value();
-					instructions[i.ssa_index].op_code = OpCode::ldc;
+					instructions[i.ssa_index].opcode = OpCode::ldc;
 					instructions[i.ssa_index].operands_count = 0;
 					instructions[operands_pool[i.operands_start].value()].use_count = 0;
 					break;
 				}
 				}
 			}
-			else if (!(ascii_symbols[get_opcode_symbol(i.op_code)] & MASK_NUMBER)) {
-				switch (i.op_code) {
+			else if (!(ascii_symbols[get_opcode_symbol(i.opcode)] & MASK_NUMBER)) {
+				switch (i.opcode) {
 				case OpCode::itofp: {
 					auto& to_cast_payload = instructions[i.operands_start];
 					instructions[i.ssa_index].payload = static_cast<float>(std::get<int32_t>(to_cast_payload.payload));
 					to_cast_payload.use_count = 0;
-					instructions[i.ssa_index].op_code = OpCode::ldc;
+					instructions[i.ssa_index].opcode = OpCode::ldc;
 					instructions[i.ssa_index].operands_count = 0;
 					break;
 				}
@@ -1093,7 +1093,7 @@ public:
 					auto& to_cast_payload = instructions[i.operands_start];
 					instructions[i.ssa_index].payload = static_cast<double>(std::get<float>(to_cast_payload.payload));
 					to_cast_payload.use_count = 0;
-					instructions[i.ssa_index].op_code = OpCode::ldc;
+					instructions[i.ssa_index].opcode = OpCode::ldc;
 					instructions[i.ssa_index].operands_count = 0;
 					break;
 				}
@@ -1112,8 +1112,8 @@ public:
 	template<typename T>
 	[[nodiscard]] std::expected <T, std::vector<ErrorMessage>> get_constant_expression_result(const OptimizerResult& optimized_ir) {
 		if (!optimized_ir.has_value()) {
-			error_handler.semantic_error_register(optimized_ir.error());
-			return std::unexpected(std::move(error_handler.errors_list));
+			error_handler.register_semantic(optimized_ir.error());
+			return std::unexpected(std::move(error_handler.messages));
 		}
 
 		return std::visit([](const auto& res) -> T {
@@ -1175,7 +1175,7 @@ private:
 
 	void dead_code_elimination() {
 		for (auto i = instructions.begin(); i != instructions.end(); ) {
-			if (i->op_code != OpCode::RET && i->use_count == 0) {
+			if (i->opcode != OpCode::RET && i->use_count == 0) {
 				i = instructions.erase(i);
 			}
 			else {
@@ -1218,24 +1218,24 @@ int main()
 
 		ErrorHandler error_handler;
 
-		std::string m_expr;
+		std::string expression;
 
-		std::getline(std::cin, m_expr);
+		std::getline(std::cin, expression);
 
-		if (m_expr == "help") {
-			help_command();
+		if (expression == "help") {
+			print_help();
 			continue;
 		}
-		else if (m_expr == "exit") {
+		else if (expression == "exit") {
 			break;
 		}
 
-		Lexer lexer(std::move(m_expr));
+		Lexer lexer(std::move(expression));
 
-		std::expected<double, std::vector<ErrorMessage>> program_pipeline = lexer.tokenization()
+		std::expected<double, std::vector<ErrorMessage>> program_pipeline = lexer.tokenize()
 			.transform([](const std::vector<Token>& correct_tokens) {
 				std::println("┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐");
-				TextFormatter::print_to_center("1. TOKENS", 0);
+				Console::print_to_center("1. TOKENS", 0);
 
 				for (const Token& token : correct_tokens) {
 					token.print();
@@ -1245,7 +1245,7 @@ int main()
 				return correct_tokens;
 			})
 			.and_then([](const std::vector<Token>& correct_tokens) {
-				TextFormatter::print_to_center("2. ABSTRACT SYNTAX TREE VALIDATION.", 0);
+				Console::print_to_center("2. ABSTRACT SYNTAX TREE VALIDATION.", 0);
 
 				PrattParser parser(correct_tokens);
 
@@ -1254,7 +1254,7 @@ int main()
 			.transform([](const AbstractSyntaxTree_SoA& soa_ast) {
 				std::println("\033[32m Math expression is valid!\033[0m");
 
-				TextFormatter::print_to_center("3. LATEX- AND UNICODE TEXT.\n", 0);
+				Console::print_to_center("3. LATEX- AND UNICODE TEXT.\n", 0);
 				ExpressionConverter converter(soa_ast);
 				converter.expr_convert();
 				std::println();
@@ -1262,17 +1262,17 @@ int main()
 				return soa_ast;
 			})
 			.and_then([current_settings](const AbstractSyntaxTree_SoA& soa_ast) {
-				TextFormatter::print_to_center("4. IR GENERATION.\n", 0);
+				Console::print_to_center("4. IR GENERATION.\n", 0);
 
 				IRGenerator ir_generator(soa_ast);
-				std::vector<IRInstruction> instructions = ir_generator.IR_generate();
-				ir_generator.IR_print(instructions);
+				std::vector<IRInstruction> instructions = ir_generator.generate();
+				ir_generator.print(instructions);
 				std::println();
 
-				TextFormatter::print_to_center("5. IR OPTIMIZATION.\n", 0);
+				Console::print_to_center("5. IR OPTIMIZATION.\n", 0);
 				IROptimizer ir_optimizer(std::move(instructions), std::move(ir_generator.get_operands_pool()), current_settings);
-				auto optimized_ir = ir_optimizer.ir_optimize();
-				ir_generator.IR_print(std::move(optimized_ir).value_or(std::vector<IRInstruction>{}));
+				auto optimized_ir = ir_optimizer.optimize();
+				ir_generator.print(std::move(optimized_ir).value_or(std::vector<IRInstruction>{}));
 
 				return ir_optimizer.get_constant_expression_result<double>(optimized_ir);
 			})
@@ -1289,8 +1289,8 @@ int main()
 
 		if (!program_pipeline.has_value()) continue;
 
-		TextFormatter::print_to_center("\033[32m 6. RESULT: ", 0);
-		TextFormatter::print_to_center(std::string(std::format("{}\033[0m\n", program_pipeline.value())), 0);
+		Console::print_to_center("\033[32m 6. RESULT: ", 0);
+		Console::print_to_center(std::string(std::format("{}\033[0m\n", program_pipeline.value())), 0);
 	}
 
 	return 0;
@@ -1299,21 +1299,21 @@ int main()
 
 
 
-void help_command() {
-	int width = TextFormatter::get_screen_width();
+void print_help() {
+	int width = Console::get_screen_width();
 
 	std::print("╔");
-	TextFormatter::print_divider("═");
+	Console::print_divider("═");
 	std::println("╗");
-	TextFormatter::print_to_center("HELP", 0);
+	Console::print_to_center("HELP", 0);
 	std::print("╚");
-	TextFormatter::print_divider("═");
+	Console::print_divider("═");
 	std::println("╝\n");
 
 
-	TextFormatter::print_header(" [ 1. 🧮 SUPPORTED OPERATORS AND SYMBOLS. ] ");
+	Console::print_header(" [ 1. 🧮 SUPPORTED OPERATORS AND SYMBOLS. ] ");
 	std::println("\033[36m FORMAT: [math object]          -        [name] \033[0m");
-	TextFormatter::print_divider("-");
+	Console::print_divider("-");
 	std::println();
 
 
@@ -1339,14 +1339,14 @@ void help_command() {
 
 
 
-	TextFormatter::print_header(" [ 2. ✍️ MATH EXPRESSIONS PRINTING GUIDE. ] ");
+	Console::print_header(" [ 2. ✍️ MATH EXPRESSIONS PRINTING GUIDE. ] ");
 	std::println(
 		"ℹ️  \033[36m If you can't print Unicode math symbols (like 2⋅2)"
 		"- you can enter them using the simple methods listed below, and they will be converted to Unicode.\n"
 		"Here is the list of how to print symbols. \033[0m \n");
 
 	std::println("\033[36m FORMAT: [Unicode symbol]        -        [simple method of printing] \033[0m");
-	TextFormatter::print_divider("-");
+	Console::print_divider("-");
 	std::println();
 	constexpr std::array guide = {
 		"⋅            -          *",
@@ -1359,10 +1359,10 @@ void help_command() {
 
 
 
-	TextFormatter::print_header(" [ 3. ⚙ SETTINGS. ] ");
+	Console::print_header(" [ 3. ⚙ SETTINGS. ] ");
 
 	std::println("\033[36m FORMAT: [Settings name]        -        [value] \033[0m");
-	TextFormatter::print_divider("-");
+	Console::print_divider("-");
 	std::println();
 	constexpr std::array settings_list = {
 		"Enable Fast Math mode            -          Apply algebraic simplifications using unsafe math optimizations (disregarding IEEE 754).",
@@ -1375,7 +1375,7 @@ void help_command() {
 
 
 
-	TextFormatter::print_header(" [ 4. 📓 NOTICES. ] ");
+	Console::print_header(" [ 4. 📓 NOTICES. ] ");
 	std::print("\033[36m");
 	constexpr std::array notices = {
 		"1) You can print negative numbers without parentheses even not at the beginning.",
@@ -1390,7 +1390,7 @@ void help_command() {
 
 
 
-	TextFormatter::print_to_center("Enjoy using the program!", 0);
-	TextFormatter::print_divider("━");
+	Console::print_to_center("Enjoy using the program!", 0);
+	Console::print_divider("━");
 	std::println();
 }
