@@ -188,8 +188,6 @@ struct ErrorHandler {
 			return "An unexpected floating point was detected outside the operand, or there were two or more of them. It must be a single one and located inside the operand.";
 		case TypeOfError::DivByZero:
 			return "You cannot divide by zero.";
-		default:
-			return "Unknown error\n";
 		}
 	}
 
@@ -302,12 +300,9 @@ class Lexer {
 		if (tokens.empty()) {
 			return true;
 		}
-		const char prev_symbol = tokens[tokens.size() - 1].value[0];
-		const bool is_prev_token_an_operator = (ascii_symbols[prev_symbol] & (math_operators | MASK_OPEN_PARENTHESIS));
-		if (is_prev_token_an_operator) {
-			return true;
-		}
-		return false;
+		char prev_symbol = tokens[tokens.back().index].value[0];
+		bool is_prev_token_an_operator = (ascii_symbols[prev_symbol] & (math_operators | MASK_OPEN_PARENTHESIS));
+		return is_prev_token_an_operator;
 	}
 
 	SafeTokens tokenization() {
@@ -352,8 +347,6 @@ class Lexer {
 					break;
 				case '^':
 					tokens.emplace_back(i, TypeOfToken::PowerSign, current_symbol_value);
-					break;
-				default:
 					break;
 				}
 			}
@@ -409,30 +402,20 @@ enum class NodeTags {
 	switch (token_type) {
 	case TypeOfToken::Number:
 		return NodeTags::Number;
-		break;
 	case TypeOfToken::Plus:
 		return NodeTags::Add;
-		break;
 	case TypeOfToken::Minus:
 		return NodeTags::Subtract;
-		break;
 	case TypeOfToken::MultiplicationSign:
 		return NodeTags::Multiply;
-		break;
 	case TypeOfToken::DivisionSign:
 		return NodeTags::Divide;
-		break;
 	case TypeOfToken::NegativeSign:
 		return NodeTags::NegativeNum;
-		break;
 	case TypeOfToken::PowerSign:
 		return NodeTags::Power;
-		break;
 	case TypeOfToken::PercentSign:
 		return NodeTags::Percent;
-		break;
-	default:
-		return NodeTags::Unknown;
 	}
 }
 
@@ -586,7 +569,7 @@ public:
 
 	[[nodiscard]] ParserResult get_parser_result() noexcept {
 		SafeInt32t parser_result = parse_expression(0);
-		if (i != tokens.size() - 1) {
+		if (i != tokens.back().index) {
 			error_handler.token_error_register(tokens[i], TypeOfError::UnexpectedEnd);
 		}
 		if (!error_handler.errors_list.empty()) {
@@ -696,7 +679,7 @@ class ExpressionConverter {
 		latex_text_syntax.reserve(ast.node_data.size());
 		unicode_text.reserve(ast.node_data.size());
 
-		expr_converter(ast.child_start.size() - 1, latex_text_syntax, unicode_text);
+		expr_converter(ast.child_start.back(), latex_text_syntax, unicode_text);
 
 		// Restore the correct character sequence for the backwards-built AST string.
 		std::reverse(latex_text_syntax.begin(), latex_text_syntax.end());
@@ -720,7 +703,7 @@ class ExpressionConverter {
 public:
 	ExpressionConverter(const ParserResult& ast)
 		: ast(ast.value())
-		, index_field(this->ast.child_start.size() - 1)
+		, index_field(this->ast.child_start.back())
 	{
 
 	}
@@ -891,7 +874,7 @@ class IRGenerator {
 			);
 		}
 		ssa_offset_from_casts++;
-		return static_cast<int32_t>(ir_instructions.size() - 1);
+		return static_cast<int32_t>(ir_instructions.back().ssa_index);
 	}
 
 	void binary_op_IR_generate(IRInstruction& left_child, IRInstruction& right_child) {
