@@ -165,8 +165,11 @@ struct ErrorMessage {
 };
 
 
+using Errors = std::vector<ErrorMessage>;
+
+
 struct ErrorHandler {
-	std::vector<ErrorMessage> messages;
+	Errors messages;
 
 	[[nodiscard]] std::string get_message(TypeOfError type) const noexcept {
 		switch (type) {
@@ -199,7 +202,7 @@ struct ErrorHandler {
 		messages.emplace_back(get_message(error_type));
 	}
 
-	[[nodiscard]] std::vector<ErrorMessage> panic_mode(const std::vector<Token>& tokens, int i, TypeOfError left_error, int defect_index) {
+	[[nodiscard]] Errors panic_mode(const std::vector<Token>& tokens, int i, TypeOfError left_error, int defect_index) {
 		register_token(tokens[defect_index], left_error);
 		while (tokens[i].type != TypeOfToken::EndOfFile) {
 			i++;
@@ -243,7 +246,7 @@ constexpr bitmask MASK_SPACE = 1 << 5;
 }
 
 
-using SafeTokens = std::expected<std::vector<Token>, std::vector<ErrorMessage>>;
+using ExpectedTokens = std::expected<std::vector<Token>, Errors>;
 
 class Lexer {
 	static constexpr std::array<bitmask, 256> ascii_symbols = lookup_table_fill();
@@ -304,7 +307,7 @@ class Lexer {
 public:
 	Lexer(std::string_view expr) : expr(expr), it(expr.begin()) {}
 
-	[[nodiscard]] SafeTokens tokenize() {
+	[[nodiscard]] ExpectedTokens tokenize() {
 		std::vector<Token> tokens;
 
 		for (; it != expr.end(); ++it) {
@@ -416,13 +419,13 @@ enum class TypeOfNode {
 
 
 
-using SafeInt32t = std::expected<int32_t, TypeOfError>;
+using ExpectedIndex = std::expected<int32_t, TypeOfError>;
 
 
 struct AbstractSyntaxTree_SoA {
 	std::vector<TypeOfNode> node_types;
 	std::vector<std::string> node_data;
-	std::vector<SafeInt32t> child_relationships;
+	std::vector<ExpectedIndex> child_relationships;
 	std::vector<int32_t> child_start;
 	std::vector<int32_t> child_count;
 
@@ -434,7 +437,7 @@ struct AbstractSyntaxTree_SoA {
 		return node_types.size() - 1;
 	}
 
-	[[nodiscard]] int32_t add_node(const Token& token, const SafeInt32t& right_child_index) {
+	[[nodiscard]] int32_t add_node(const Token& token, const ExpectedIndex& right_child_index) {
 		node_types.push_back(typeoftoken_to_typeofnode(token.type));
 		node_data.push_back(token.value);
 		child_start.push_back(child_relationships.size());
@@ -443,7 +446,7 @@ struct AbstractSyntaxTree_SoA {
 		return node_types.size() - 1;
 	}
 
-	[[nodiscard]] int32_t add_node(const Token& token, const SafeInt32t& left_child_index, const SafeInt32t& right_child_index) {
+	[[nodiscard]] int32_t add_node(const Token& token, const ExpectedIndex& left_child_index, const ExpectedIndex& right_child_index) {
 		node_types.push_back(typeoftoken_to_typeofnode(token.type));
 		node_data.push_back(token.value);
 		child_start.push_back(child_relationships.size());
@@ -455,7 +458,7 @@ struct AbstractSyntaxTree_SoA {
 };
 
 
-using ParserResult = std::expected<AbstractSyntaxTree_SoA, std::vector<ErrorMessage>>;
+using ParserResult = std::expected<AbstractSyntaxTree_SoA, Errors>;
 
 class PrattParser {
 	std::vector<Token> tokens;
@@ -486,14 +489,14 @@ class PrattParser {
 		}
 	}
 
-	[[nodiscard]] SafeInt32t NUD(const Token& token) {
+	[[nodiscard]] ExpectedIndex NUD(const Token& token) {
 		if (token.type == TypeOfToken::NegationSign) {
-			SafeInt32t operand = start_pratt_parser(3);
+			ExpectedIndex operand = start_pratt_parser(3);
 			return ast.value().add_node(token, operand);
 		}
 		else if (token.type == TypeOfToken::OpenParenthesis) {
 			int current_openp_index = i;
-			SafeInt32t open_p = start_pratt_parser(0);
+			ExpectedIndex open_p = start_pratt_parser(0);
 			if (tokens[i].type == TypeOfToken::CloseParenthesis) {
 				i++;
 			}
@@ -514,8 +517,8 @@ class PrattParser {
 		}
 	}
 
-	[[nodiscard]] SafeInt32t LED(const Token& token, const SafeInt32t& left) {
-		SafeInt32t right;
+	[[nodiscard]] ExpectedIndex LED(const Token& token, const ExpectedIndex& left) {
+		ExpectedIndex right;
 		switch (token.type) {
 		case TypeOfToken::PercentSign:
 			return ast.value().add_node(token, left);
@@ -535,19 +538,19 @@ public:
 		error_handler.messages.reserve(expr_strings_count);
 	}
 
-	SafeInt32t start_pratt_parser(int rbp) {
+	ExpectedIndex start_pratt_parser(int rbp) {
 		if (i == tokens.size()) return 0;
 
 		Token current_token = tokens[i];
 
 		i++;
 
-		SafeInt32t left = NUD(current_token);
+		ExpectedIndex left = NUD(current_token);
 		if (!left.has_value()) {
 			i--;
 			if (error_handler.messages.size() < expr_strings_count) {
 				int defect_index = (left.error() == TypeOfError::ParenthesesImbalance) ? openp_index : i;
-				std::vector<ErrorMessage> parse_errors = error_handler.panic_mode(tokens, i, left.error(), defect_index);
+				Errors parse_errors = error_handler.panic_mode(tokens, i, left.error(), defect_index);
 				errors_count++;
 			}
 			return std::unexpected(left.error());
@@ -675,7 +678,7 @@ class ExpressionConverter {
 		latex_text_syntax.reserve(ast.node_data.size());
 		unicode_text.reserve(ast.node_data.size());
 
-		expr_converter(ast.child_start.back(), latex_text_syntax, unicode_text);
+		expr_converter(ast.child_start.size() - 1, latex_text_syntax, unicode_text);
 
 		// Restore the correct character sequence for the backwards-built AST string.
 		std::reverse(latex_text_syntax.begin(), latex_text_syntax.end());
@@ -699,7 +702,7 @@ class ExpressionConverter {
 public:
 	ExpressionConverter(const ParserResult& ast)
 		: ast(ast.value())
-		, index_field(this->ast.child_start.back())
+		, index_field(this->ast.child_start.size() - 1)
 	{
 
 	}
@@ -750,7 +753,7 @@ class IRGenerator {
 	AbstractSyntaxTree_SoA ast;
 
 	std::vector<IRInstruction> ir_instructions;
-	std::vector<SafeInt32t> operands_pool;
+	std::vector<ExpectedIndex> operands_pool;
 	int i = 0;
 	int32_t ssa_offset_from_casts = 0;
 
@@ -908,7 +911,7 @@ public:
 
 	}
 
-	[[nodiscard]] std::vector<SafeInt32t> get_operands_pool() const noexcept {
+	[[nodiscard]] std::vector<ExpectedIndex> get_operands_pool() const noexcept {
 		return operands_pool;
 	}
 
@@ -1019,7 +1022,7 @@ concept ConstantType = std::same_as<T, int32_t> ||
 					   std::same_as<T, double>;
 class IROptimizer {
 public:
-	IROptimizer(const std::vector<IRInstruction>& ir_instructions, const std::vector<SafeInt32t>& instructions_operands_pool, bitmask settings)
+	IROptimizer(const std::vector<IRInstruction>& ir_instructions, const std::vector<ExpectedIndex>& instructions_operands_pool, bitmask settings)
 		: instructions(ir_instructions)
 		, operands_pool(instructions_operands_pool)
 		, current_settings(settings)
@@ -1108,7 +1111,7 @@ public:
 	}
 
 	template<typename T>
-	[[nodiscard]] std::expected <T, std::vector<ErrorMessage>> get_constant_expression_result(const OptimizerResult& optimized_ir) {
+	[[nodiscard]] std::expected <T, Errors> get_constant_expression_result(const OptimizerResult& optimized_ir) {
 		if (!optimized_ir.has_value()) {
 			error_handler.register_semantic(optimized_ir.error());
 			return std::unexpected(std::move(error_handler.messages));
@@ -1136,7 +1139,7 @@ private:
 	bitmask current_settings;
 
 	std::vector<IRInstruction> instructions;
-	std::vector<SafeInt32t> operands_pool;
+	std::vector<ExpectedIndex> operands_pool;
 
 	ErrorHandler error_handler;
 
@@ -1227,7 +1230,7 @@ int main()
 
 		Lexer lexer(std::move(expression));
 
-		std::expected<double, std::vector<ErrorMessage>> program_pipeline = lexer.tokenize()
+		std::expected<double, Errors> program_pipeline = lexer.tokenize()
 			.transform([](const std::vector<Token>& correct_tokens) {
 				std::println("┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐");
 				Console::print_to_center("1. TOKENS", 0);
@@ -1271,7 +1274,7 @@ int main()
 
 				return ir_optimizer.get_constant_expression_result<double>(optimized_ir);
 			})
-			.transform_error([](const std::vector<ErrorMessage>& errors) {
+			.transform_error([](const Errors& errors) {
 				std::println("\033[1;31m Math expression is invalid. Reason:");
 				for (const auto& it : errors) {
 					if (it.defect_token.has_value()) {
