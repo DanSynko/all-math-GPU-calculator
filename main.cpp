@@ -247,7 +247,6 @@ using SafeTokens = std::expected<std::vector<Token>, std::vector<ErrorMessage>>;
 
 class Lexer {
 	static constexpr std::array<bitmask, 256> ascii_symbols = lookup_table_fill();
-	bitmask math_operators = MASK_OPERATOR;
 	bitmask mask_parentheses = MASK_OPEN_PARENTHESIS | MASK_CLOSE_PARENTHESIS;
 
 	ErrorHandler error_handler;
@@ -298,7 +297,7 @@ class Lexer {
 			return true;
 		}
 		char prev_symbol = tokens[tokens.back().index].value[0];
-		bool is_prev_token_an_operator = (ascii_symbols[prev_symbol] & (math_operators | MASK_OPEN_PARENTHESIS));
+		bool is_prev_token_an_operator = (ascii_symbols[prev_symbol] & (MASK_OPERATOR | MASK_OPEN_PARENTHESIS));
 		return is_prev_token_an_operator;
 	}
 
@@ -319,7 +318,7 @@ public:
 			current_symbol_type = ascii_symbols[current_symbol_value];
 			if (current_symbol_type & MASK_SPACE) continue;
 
-			if (current_symbol_type & (math_operators | mask_parentheses)) {
+			if (current_symbol_type & (MASK_OPERATOR | mask_parentheses)) {
 				switch (current_symbol_value) {
 				case '+':
 					tokens.emplace_back(i, TypeOfToken::Plus, current_symbol_value);
@@ -384,7 +383,6 @@ public:
 };
 
 enum class TypeOfNode {
-	Unknown,
 	Number,
 	Addition,
 	Subtraction,
@@ -1138,7 +1136,6 @@ private:
 	bitmask current_settings;
 
 	std::vector<IRInstruction> instructions;
-	std::vector<IRInstruction> optimized_instructions;
 	std::vector<SafeInt32t> operands_pool;
 
 	ErrorHandler error_handler;
@@ -1194,8 +1191,6 @@ private:
 		case OpCode::pct: return '%';
 		}
 	}
-
-
 };
 
 
