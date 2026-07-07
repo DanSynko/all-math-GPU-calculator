@@ -146,7 +146,6 @@ struct Token {
 };
 
 
-
 enum class TypeOfError {
 	NoInput,
 	UnknownSymbol,
@@ -156,7 +155,8 @@ enum class TypeOfError {
 	UnexpectedEnd,
 	InvalidPrefixOperator,
 	InvalidFloatingPoint,
-	DivByZero
+	DivByZero,
+	UnsupportedComplex
 };
 
 struct ErrorMessage {
@@ -191,6 +191,8 @@ struct ErrorHandler {
 			return "An unexpected floating point was detected outside the operand, or there were two or more of them. It must be a single one and located inside the operand.";
 		case TypeOfError::DivByZero:
 			return "You cannot divide by zero.";
+		case TypeOfError::UnsupportedComplex:
+			return "Complex numbers are not supported in the program at the moment. Apologize for the inconvenience.";
 		}
 	}
 
@@ -491,7 +493,7 @@ class PrattParser {
 
 	[[nodiscard]] ExpectedIndex NUD(const Token& token) {
 		if (token.type == TypeOfToken::NegationSign) {
-			ExpectedIndex operand = start_pratt_parser(3);
+			ExpectedIndex operand = start_pratt_parser(4);
 			return ast.value().add_node(token, operand);
 		}
 		else if (token.type == TypeOfToken::OpenParenthesis) {
@@ -755,21 +757,11 @@ class IRGenerator {
 	std::vector<IRInstruction> ir_instructions;
 	std::vector<ExpectedIndex> operands_pool;
 	int i = 0;
-	int32_t ssa_offset_from_casts = 0;
 
 	[[nodiscard]] PayloadType string_to_number(std::string_view literal) const noexcept {
 		PayloadType to_number;
-		if (literal.contains('.')) {
-			if (literal.size() <= 7) {
-				to_number.emplace<float>();
-			}
-			else {
-				to_number.emplace<double>();
-			}
-		}
-		else {
-			to_number.emplace<int32_t>();
-		}
+
+		to_number.emplace<double>();
 
 		std::visit([&literal](auto& val) {
 			using T = std::decay_t<decltype(val)>;
@@ -794,43 +786,6 @@ class IRGenerator {
 		}
 	}
 
-	[[nodiscard]] IRInstructionType get_type(const PayloadType& payload_value) const noexcept {
-		IRInstructionType type;
-		std::visit([&](const auto& payload_type) {
-			using T = std::decay_t<decltype(payload_type)>;
-
-			if constexpr (std::is_same_v<T, int32_t>) {
-				type = IRInstructionType::i32;
-			}
-			else if constexpr (std::is_same_v<T, float>) {
-				type = IRInstructionType::f32;
-			}
-			else if constexpr (std::is_same_v<T, double>) {
-				type = IRInstructionType::f64;
-			}
-			}, payload_value);
-
-		return type;
-	}
-
-	[[nodiscard]] bool right_child_is_higher_precision(const IRInstruction& left_child, const IRInstruction& right_child) const noexcept {
-		IRInstructionType left_child_type = left_child.type;
-		IRInstructionType right_child_type = right_child.type;
-
-		if (right_child_type == IRInstructionType::i32) {
-			return false;
-		}
-		else if (left_child_type == IRInstructionType::f64) {
-			return false;
-		}
-		else if (left_child_type == IRInstructionType::i32) {
-			return true;
-		}
-		else if (right_child_type == IRInstructionType::f64) {
-			return true;
-		}
-	}
-
 	[[nodiscard]] OpCode get_opcode(TypeOfNode node_type) const noexcept {
 		switch (node_type) {
 		case TypeOfNode::Addition:			return OpCode::add;
@@ -843,64 +798,19 @@ class IRGenerator {
 		}
 	}
 
-	int32_t type_cast_IR_generate(IRInstruction& left_child, IRInstruction& right_child) {
-		if (right_child_is_higher_precision(left_child, right_child)) {
-			right_child.is_higher_precision = true;
-			OpCode opcode_of_cast = (left_child.type == IRInstructionType::i32) ? OpCode::itofp : OpCode::fpext;
-			ir_instructions.emplace_back(
-				std::monostate{},
-				opcode_of_cast,
-				right_child.type,
-				i + ssa_offset_from_casts,
-				left_child.ssa_index,
-				1,
-				left_child.use_count,
-				true
-			);
-		}
-		else {
-			left_child.is_higher_precision = true;
-			OpCode opcode_of_cast = (right_child.type == IRInstructionType::i32) ? OpCode::itofp : OpCode::fpext;
-			ir_instructions.emplace_back(
-				std::monostate{},
-				opcode_of_cast,
-				left_child.type,
-				i + ssa_offset_from_casts,
-				right_child.ssa_index,
-				1,
-				right_child.use_count,
-				true
-			);
-		}
-		ssa_offset_from_casts++;
-		return static_cast<int32_t>(ir_instructions.back().ssa_index);
-	}
-
 	void binary_op_IR_generate(IRInstruction& left_child, IRInstruction& right_child) {
-		if (left_child.type != right_child.type) {
-			int32_t new_operand = type_cast_IR_generate(left_child, right_child);
-			if (left_child.is_higher_precision) {
-				operands_pool[ast.child_start[i] + 1] = new_operand;
-				right_child.type = left_child.type;
-			}
-			else {
-				operands_pool[ast.child_start[i]] = new_operand;
-				left_child.type = right_child.type;
-			}
-		}
-		ir_instructions.push_back(
-			IRInstruction(
-				std::monostate{},
-				get_opcode(ast.node_types[i]),
-				left_child.type,
-				i + ssa_offset_from_casts,
-				ast.child_start[i],
-				2,
-				0
-			)
+		ir_instructions.emplace_back(
+			std::monostate{},
+			get_opcode(ast.node_types[i]),
+			IRInstructionType::f64,
+			i,
+			ast.child_start[i],
+			2,
+			0
 		);
-		ir_instructions[ast.child_start[i]].use_count++;
-		ir_instructions[ast.child_start[i] + 1].use_count++;
+		auto& current_instr = ir_instructions.back();
+		ir_instructions[operands_pool[current_instr.operands_start].value()].use_count++;
+		ir_instructions[operands_pool[current_instr.operands_start + 1].value()].use_count++;
 	}
 
 public:
@@ -930,25 +840,22 @@ public:
 			}
 			case TypeOfNode::Negation:
 			case TypeOfNode::Percent: {
-				ir_instructions.push_back(
-					IRInstruction(
-						std::monostate{},
-						get_opcode(ast.node_types[i]), 
-						IRInstructionType::i32,
-						i + ssa_offset_from_casts, 
-						ast.child_start[i], 
-						1
-					)
+				ir_instructions.emplace_back(
+					std::monostate{},
+					get_opcode(ast.node_types[i]), 
+					IRInstructionType::f64,
+					i, 
+					ast.child_start[i], 
+					1,
+					0
 				);
-				ir_instructions[ast.child_start[i]].use_count++;
-
 				auto& current_ir = ir_instructions.back();
 				current_ir.type = ir_instructions[operands_pool[current_ir.operands_start].value()].type;
 				continue;
 			}
 			case TypeOfNode::Number: {
 				auto numbered_payload = string_to_number(ast.node_data[i]);
-				ir_instructions.push_back(IRInstruction(numbered_payload, OpCode::ldc, get_type(numbered_payload), i + ssa_offset_from_casts, -1, 0, 0));
+				ir_instructions.emplace_back(numbered_payload, OpCode::ldc, IRInstructionType::f64, i, -1, 0, 0);
 				continue;
 			}
 			}
@@ -1029,7 +936,7 @@ public:
 	{
 
 	}
-
+	
 	using OptimizerResult = std::expected<std::vector<IRInstruction>, TypeOfError>;
 	[[nodiscard]] OptimizerResult optimize() {
 		for (auto& i : instructions) {
@@ -1047,8 +954,11 @@ public:
 						if constexpr (ConstantType<LeftT> && std::same_as<LeftT, RightT>) {
 							return fold_constants<LeftT>(i.opcode, l, r);
 						}
-
-						return l;
+						else {
+							std::println("{}", sizeof(LeftT));
+							std::println("{}", sizeof(RightT));
+							return l;
+						}
 						}, instructions[operands_pool[i.operands_start].value()].payload, instructions[operands_pool[i.operands_start + 1].value()].payload);
 					
 					if (!correct_result.has_value()) return std::unexpected(correct_result.error());
@@ -1068,9 +978,15 @@ public:
 						if constexpr (ConstantType<RightT>) {
 							return this->fold_constants<RightT>(i.opcode, r);
 						}
-
-						return r;
+						else {
+							std::println("{}", sizeof(RightT));
+							return r;
+						}
 						}, instructions[operands_pool[i.operands_start].value()].payload);
+
+					if (!correct_result.has_value()) {
+						error_handler.register_semantic(correct_result.error());
+					}
 
 					instructions[i.ssa_index].payload = correct_result.value();
 					instructions[i.ssa_index].opcode = OpCode::ldc;
@@ -1144,6 +1060,26 @@ private:
 	ErrorHandler error_handler;
 
 	template<ConstantType T>
+	[[nodiscard]] std::expected<PayloadType, TypeOfError> fold_constants_pow(T base, T exponent) const noexcept {
+		using base_T = std::decay_t<decltype(base)>;
+		using exponent_T = std::decay_t<decltype(exponent)>;
+
+		// Mathematically, a complex result occurs only when a fractional exponent has an even denominator. 
+		// However, checking for an even denominator is impossible on a PC due to the binary nature of IEEE 754.
+		// Every float/double fraction stored in memory always has a denominator that is a power of 2 (which is always even).
+		// For example, 1.0 / 3.0 becomes 0.33333333333333331482961625624739, or 6004799503160661 / 18014398509481984.
+		// The denominator is 2^55, which is even. 
+		// Conclusion: any fractional exponent of a negative base is processed as an even-root extraction, leading to NaN.
+		// Therefore, we simply check for the presence of any fractional part in the exponent (exponent_has_frac).
+		bool exponent_has_frac = exponent != std::trunc(exponent);
+		if (base < 0 && exponent_has_frac) {
+			return std::unexpected(TypeOfError::UnsupportedComplex);
+		}
+		return std::pow(base, exponent);
+	}
+
+
+	template<ConstantType T>
 	[[nodiscard]] std::expected<PayloadType, TypeOfError> fold_constants(OpCode op, T left_child, T right_child) const noexcept {
 		switch (op) {
 		case OpCode::add:
@@ -1159,7 +1095,7 @@ private:
 			if (right_child == 0.0) return std::unexpected(TypeOfError::DivByZero);
 			return left_child / right_child;
 		case OpCode::pow:
-			return std::pow(left_child, right_child);
+			return fold_constants_pow(left_child, right_child);
 		}
 	}
 
@@ -1363,10 +1299,9 @@ void print_help() {
 	Console::print_divider("-");
 	std::println();
 	constexpr std::array settings_list = {
-		"Enable Fast Math mode            -          Apply algebraic simplifications using unsafe math optimizations (disregarding IEEE 754).",
-		"𝑥ʸ           -          x^y",
+		"Enable Fast Math mode            -          Apply algebraic simplifications using unsafe math optimizations (disregarding IEEE 754)."
 	};
-	for (const auto& i : guide) {
+	for (const auto& i : settings_list) {
 		std::println("{}", i);
 	}
 	std::println();
@@ -1379,7 +1314,10 @@ void print_help() {
 		"1) You can print negative numbers without parentheses even not at the beginning.",
 		"2) You need to use parentheses if the exponent contains more than just a single constant or variable (for example, an operator).",
 		"3) Unicode does not support nested exponents like LaTeX; it only supports one level(e. g. 2², but not 2²²).",
-		"4) Programm does not support output LaTeX image in now."
+		"4) Programm does not support output LaTeX image in now.",
+		"5) A 'Complex numbers are not supported at the moment' error may occur with the following mathematical expressions:\n",
+		"	1. Square root of a negative number;",
+		"	2. Negative base raised to a fractional exponent (e.g., -2 ^ 0.5 )."
 	};
 	for (const auto& i : notices) {
 		std::println("{}", i);

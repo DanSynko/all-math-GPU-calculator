@@ -12,5 +12,5 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 add_executable(all_math_GPU_calculator main.cpp)
 
 if(MSVC)
-    target_compile_options(all_math_GPU_calculator PRIVATE /utf-8)
+    target_compile_options(all_math_GPU_calculator PRIVATE /utf-8 /w14062)
 endif()
