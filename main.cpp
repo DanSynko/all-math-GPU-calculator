@@ -23,11 +23,8 @@ import std;
 
 using bitmask = uint8_t;
 
-struct Settings {
-	enum Bitmask : bitmask {
-		fast_math = 1 << 0
-	};
-
+class Settings {
+public:
 	bitmask load_settings() {
 		std::ifstream out("config.txt");
 		bitmask loaded_settings = 0;
@@ -46,11 +43,14 @@ struct Settings {
 
 		return loaded_settings;
 	}
+private:
+	enum Bitmask : bitmask {
+		fast_math = 1 << 0
+	};
 };
 
 
 namespace Console {
-
 	int get_screen_width() noexcept {
 #ifdef _WIN32
 		HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -114,10 +114,6 @@ enum class TypeOfToken {
 };
 
 struct Token {
-	int32_t index;
-	TypeOfToken type;
-	std::string_view value;
-
 	Token() = default;
 
 	Token(int num, TypeOfToken type, std::string_view value)
@@ -135,6 +131,10 @@ struct Token {
 			value
 		);
 	}
+
+	int32_t index;
+	TypeOfToken type;
+	std::string_view value;
 };
 
 
@@ -159,10 +159,26 @@ struct ErrorMessage {
 
 using Errors = std::vector<ErrorMessage>;
 
+class ErrorHandler {
+public:
+	void register_token(const Token& defect_token, TypeOfError error_type) {
+		messages.emplace_back(get_message(error_type), defect_token);
+	}
 
-struct ErrorHandler {
+	void register_semantic(TypeOfError error_type) {
+		messages.emplace_back(get_message(error_type));
+	}
+
+	[[nodiscard]] Errors panic_mode(const std::vector<Token>& tokens, int i, TypeOfError left_error, int defect_index) {
+		register_token(tokens[defect_index], left_error);
+		while (tokens[i].type != TypeOfToken::EndOfFile) {
+			i++;
+		}
+		return messages;
+	}
+
 	Errors messages;
-
+private:
 	[[nodiscard]] std::string_view get_message(TypeOfError type) const noexcept {
 		switch (type) {
 		case TypeOfError::NoInput:
@@ -188,21 +204,6 @@ struct ErrorHandler {
 		}
 	}
 
-	void register_token(const Token& defect_token, TypeOfError error_type) {
-		messages.emplace_back(get_message(error_type), defect_token);
-	}
-
-	void register_semantic(TypeOfError error_type) {
-		messages.emplace_back(get_message(error_type));
-	}
-
-	[[nodiscard]] Errors panic_mode(const std::vector<Token>& tokens, int i, TypeOfError left_error, int defect_index) {
-		register_token(tokens[defect_index], left_error);
-		while (tokens[i].type != TypeOfToken::EndOfFile) {
-			i++;
-		}
-		return messages;
-	}
 };
 
 
@@ -243,59 +244,8 @@ constexpr bitmask MASK_SPACE = 1 << 5;
 using ExpectedTokens = std::expected<std::vector<Token>, Errors>;
 
 class Lexer {
-	static constexpr std::array<bitmask, 256> ascii_symbols = lookup_table_fill();
-	bitmask mask_parentheses = MASK_OPEN_PARENTHESIS | MASK_CLOSE_PARENTHESIS;
-
-	ErrorHandler error_handler;
-
-	std::string_view expr;
-	std::string_view::const_iterator it;
-	int i = 0;
-	bitmask current_symbol_type = 0;
-	uint8_t current_symbol_value = 0;
-
-	[[nodiscard]] std::expected<Token, TypeOfError> number_tokenize() noexcept {
-		bitmask in_number_symbols = MASK_NUMBER | MASK_FLOATING_POINT | MASK_SPACE;
-		bool has_point = false;
-
-		auto num_start = it;
-		size_t num_length = 0;
-		while (current_symbol_type & in_number_symbols) {
-			if (current_symbol_type & MASK_FLOATING_POINT) {
-				if (has_point) {
-					return std::unexpected(TypeOfError::InvalidFloatingPoint);
-				}
-				has_point = true;
-			}
-
-			++it; ++num_length;
-
-			if (it == expr.end()) {
-				break;
-			}
-			current_symbol_type = ascii_symbols[*it];
-			current_symbol_value = *it;
-		}
-
-		bitmask num_end_symbol = static_cast<bitmask>(ascii_symbols[*(--it)]);
-		if (num_end_symbol & MASK_FLOATING_POINT) {
-			return std::unexpected(TypeOfError::InvalidFloatingPoint);
-		}
-
-		return Token(i, TypeOfToken::Number, std::string_view(num_start, num_start + num_length));
-	}
-
-	[[nodiscard]] bool is_negationsign(const std::vector<Token>& tokens) const noexcept {
-		if (tokens.empty()) {
-			return true;
-		}
-		auto prev_symbol = tokens.back().value.data();
-		bool is_prev_token_an_operator = (ascii_symbols[*prev_symbol] & (MASK_OPERATOR | MASK_OPEN_PARENTHESIS));
-		return is_prev_token_an_operator;
-	}
-
 public:
-	Lexer(std::string_view expr) : expr(expr), it(expr.begin()) {}
+	explicit Lexer(std::string_view expr) : expr(expr), it(expr.begin()) {}
 
 	[[nodiscard]] ExpectedTokens tokenize() {
 		std::vector<Token> tokens;
@@ -343,7 +293,7 @@ public:
 				}
 			}
 			else if (current_symbol_type & MASK_NUMBER) {
-				std::expected<Token, TypeOfError> number = number_tokenize();
+				std::expected<Token, TypeOfError> number = tokenize_number();
 				if (!number.has_value()) {
 					Token defect_number(i, TypeOfToken::Default, current_symbol_value_it);
 					error_handler.register_token(defect_number, TypeOfError::InvalidFloatingPoint);
@@ -368,7 +318,59 @@ public:
 
 		return tokens;
 	}	
+private:
+	static constexpr std::array ascii_symbols = lookup_table_fill();
+	bitmask mask_parentheses = MASK_OPEN_PARENTHESIS | MASK_CLOSE_PARENTHESIS;
+
+	ErrorHandler error_handler;
+
+	std::string_view expr;
+	std::string_view::const_iterator it;
+	int i = 0;
+	bitmask current_symbol_type = 0;
+	uint8_t current_symbol_value = 0;
+
+	[[nodiscard]] std::expected<Token, TypeOfError> tokenize_number() noexcept {
+		bitmask in_number_symbols = MASK_NUMBER | MASK_FLOATING_POINT | MASK_SPACE;
+		bool has_point = false;
+
+		auto num_start = it;
+		size_t num_length = 0;
+		while (current_symbol_type & in_number_symbols) {
+			if (current_symbol_type & MASK_FLOATING_POINT) {
+				if (has_point) {
+					return std::unexpected(TypeOfError::InvalidFloatingPoint);
+				}
+				has_point = true;
+			}
+
+			++it; ++num_length;
+
+			if (it == expr.end()) {
+				break;
+			}
+			current_symbol_type = ascii_symbols[*it];
+			current_symbol_value = *it;
+		}
+
+		bitmask num_end_symbol = static_cast<bitmask>(ascii_symbols[*(--it)]);
+		if (num_end_symbol & MASK_FLOATING_POINT) {
+			return std::unexpected(TypeOfError::InvalidFloatingPoint);
+		}
+
+		return Token(i, TypeOfToken::Number, std::string_view(num_start, num_start + num_length));
+	}
+
+	[[nodiscard]] bool is_negationsign(const std::vector<Token>& tokens) const noexcept {
+		if (tokens.empty()) {
+			return true;
+		}
+		auto prev_symbol = tokens.back().value.data();
+		bool is_prev_token_an_operator = (ascii_symbols[*prev_symbol] & (MASK_OPERATOR | MASK_OPEN_PARENTHESIS));
+		return is_prev_token_an_operator;
+	}
 };
+
 
 enum class TypeOfNode {
 	Number,
@@ -381,39 +383,10 @@ enum class TypeOfNode {
 	Percent
 };
 
-[[nodiscard]] TypeOfNode typeoftoken_to_typeofnode(TypeOfToken token_type) noexcept {
-	switch (token_type) {
-	case TypeOfToken::Number:
-		return TypeOfNode::Number;
-	case TypeOfToken::Plus:
-		return TypeOfNode::Addition;
-	case TypeOfToken::Minus:
-		return TypeOfNode::Subtraction;
-	case TypeOfToken::MultiplicationSign:
-		return TypeOfNode::Multiplication;
-	case TypeOfToken::DivisionSign:
-		return TypeOfNode::Division;
-	case TypeOfToken::NegationSign:
-		return TypeOfNode::Negation;
-	case TypeOfToken::PowerSign:
-		return TypeOfNode::Power;
-	case TypeOfToken::PercentSign:
-		return TypeOfNode::Percent;
-	}
-}
-
-
-
 using ExpectedIndex = std::expected<int32_t, TypeOfError>;
 
-
-struct AbstractSyntaxTree_SoA {
-	std::vector<TypeOfNode> node_types;
-	std::vector<std::string_view> node_data;
-	std::vector<ExpectedIndex> child_relationships;
-	std::vector<int32_t> child_start;
-	std::vector<int32_t> child_count;
-
+class AbstractSyntaxTree_SoA {
+public:
 	[[nodiscard]] int32_t add_node(const Token& token) {
 		node_types.push_back(typeoftoken_to_typeofnode(token.type));
 		node_data.emplace_back(token.value.data(), token.value.size());
@@ -440,22 +413,83 @@ struct AbstractSyntaxTree_SoA {
 		child_relationships.push_back(right_child_index);
 		return node_types.size() - 1;
 	}
+
+	std::vector<TypeOfNode> node_types;
+	std::vector<std::string_view> node_data;
+	std::vector<ExpectedIndex> child_relationships;
+	std::vector<int32_t> child_start;
+	std::vector<int32_t> child_count;
+private:
+	[[nodiscard]] TypeOfNode typeoftoken_to_typeofnode(TypeOfToken token_type) const noexcept {
+		switch (token_type) {
+		case TypeOfToken::Number:
+			return TypeOfNode::Number;
+		case TypeOfToken::Plus:
+			return TypeOfNode::Addition;
+		case TypeOfToken::Minus:
+			return TypeOfNode::Subtraction;
+		case TypeOfToken::MultiplicationSign:
+			return TypeOfNode::Multiplication;
+		case TypeOfToken::DivisionSign:
+			return TypeOfNode::Division;
+		case TypeOfToken::NegationSign:
+			return TypeOfNode::Negation;
+		case TypeOfToken::PowerSign:
+			return TypeOfNode::Power;
+		case TypeOfToken::PercentSign:
+			return TypeOfNode::Percent;
+		}
+	}
 };
 
 
 using ParserResult = std::expected<AbstractSyntaxTree_SoA, Errors>;
 
 class PrattParser {
-	std::vector<Token> tokens;
-	ParserResult ast;
+public:
+	explicit PrattParser(const std::vector<Token>& some_tokens) : tokens(some_tokens) {
+		error_handler.messages.reserve(expr_strings_count);
+	}
 
-	ErrorHandler error_handler;
+	ExpectedIndex start_pratt_parser(int rbp) {
+		if (i == tokens.size()) return 0;
 
-	int i = 0;
-	int current_index = 0;
-	int openp_index = 0;
-	int expr_strings_count = 1;
-	int errors_count = 0;
+		Token current_token = tokens[i];
+
+		i++;
+
+		ExpectedIndex left = NUD(current_token);
+		if (!left.has_value()) {
+			i--;
+			if (error_handler.messages.size() < expr_strings_count) {
+				int defect_index = (left.error() == TypeOfError::ParenthesesImbalance) ? openp_index : i;
+				Errors parse_errors = error_handler.panic_mode(tokens, i, left.error(), defect_index);
+				errors_count++;
+			}
+			return std::unexpected(left.error());
+		}
+
+		while (rbp < lookahead_lbp(tokens[i].type)) {
+			Token op_token = tokens[i];
+			i++;
+			left = LED(op_token, left);
+		}
+
+		return left;
+	}
+
+	[[nodiscard]] ParserResult parse() {
+		start_pratt_parser(0);
+		if (!error_handler.messages.empty()) {
+			return std::unexpected(error_handler.messages);
+		}
+		if (i != tokens.back().index) {
+			error_handler.register_token(tokens[i], TypeOfError::UnexpectedEnd);
+			return std::unexpected(error_handler.messages);
+		}
+		return ast;
+	}
+private:
 
 	[[nodiscard]] int lookahead_lbp(TypeOfToken token_type) const noexcept {
 		switch (token_type) {
@@ -518,61 +552,35 @@ class PrattParser {
 		}
 	}
 
-public:
-	PrattParser(const std::vector<Token>& some_tokens) : tokens(some_tokens) {
-		error_handler.messages.reserve(expr_strings_count);
-	}
+	std::vector<Token> tokens;
+	ParserResult ast;
 
-	ExpectedIndex start_pratt_parser(int rbp) {
-		if (i == tokens.size()) return 0;
+	ErrorHandler error_handler;
 
-		Token current_token = tokens[i];
-
-		i++;
-
-		ExpectedIndex left = NUD(current_token);
-		if (!left.has_value()) {
-			i--;
-			if (error_handler.messages.size() < expr_strings_count) {
-				int defect_index = (left.error() == TypeOfError::ParenthesesImbalance) ? openp_index : i;
-				Errors parse_errors = error_handler.panic_mode(tokens, i, left.error(), defect_index);
-				errors_count++;
-			}
-			return std::unexpected(left.error());
-		}
-
-		while (rbp < lookahead_lbp(tokens[i].type)) {
-			Token op_token = tokens[i];
-			i++;
-			left = LED(op_token, left);
-		}
-
-		return left;
-	}
-
-	[[nodiscard]] ParserResult parse() {
-		start_pratt_parser(0);
-		if (!error_handler.messages.empty()) {
-			return std::unexpected(error_handler.messages);
-		}
-		if (i != tokens.back().index) {
-			error_handler.register_token(tokens[i], TypeOfError::UnexpectedEnd);
-			return std::unexpected(error_handler.messages);
-		}
-		return ast;
-	}
+	int i = 0;
+	int current_index = 0;
+	int openp_index = 0;
+	int expr_strings_count = 1;
+	int errors_count = 0;
 };
 
 
 
 class ExpressionConverter {
-	AbstractSyntaxTree_SoA ast;
-	int32_t index_field;
-	std::string latex_text_field;
-	std::string unicode_text_field;
+public:
+	explicit ExpressionConverter(const ParserResult& ast)
+		: ast(ast.value())
+		, index_field(this->ast.child_start.size() - 1)
+	{
 
-	bool parent_is_power = false;
+	}
 
+	void expr_convert() {
+		to_latex_and_unicode_text();
+		Console::print_to_center(latex_text_field, 0);
+		Console::print_to_center(unicode_text_field, 0);
+	}
+private:
 	[[nodiscard]] std::string get_unicode_power_exponent(std::string_view exponent) const {
 		std::string exponent_expr;
 		for (int i = 0; i < exponent.size(); ++i) {
@@ -684,19 +692,13 @@ class ExpressionConverter {
 		latex_text_field = latex_text_string;
 		unicode_text_field = unicode_text_string;
 	}
-public:
-	ExpressionConverter(const ParserResult& ast)
-		: ast(ast.value())
-		, index_field(this->ast.child_start.size() - 1)
-	{
 
-	}
+	AbstractSyntaxTree_SoA ast;
+	int32_t index_field;
+	std::string latex_text_field;
+	std::string unicode_text_field;
 
-	void expr_convert() {
-		to_latex_and_unicode_text();
-		Console::print_to_center(latex_text_field, 0);
-		Console::print_to_center(unicode_text_field, 0);
-	}
+	bool parent_is_power = false;
 };
 
 
@@ -735,69 +737,8 @@ struct IRInstruction {
 };
 
 class IRGenerator {
-	AbstractSyntaxTree_SoA ast;
-
-	std::vector<IRInstruction> ir_instructions;
-	std::vector<ExpectedIndex> operands_pool;
-	int i = 0;
-
-	[[nodiscard]] PayloadType string_to_number(std::string_view literal) const noexcept {
-		PayloadType to_number;
-
-		to_number.emplace<double>();
-
-		std::visit([&literal](auto& val) {
-			using T = std::decay_t<decltype(val)>;
-
-			if constexpr (std::is_same_v<T, std::monostate>) {
-				return;
-			}
-			else {
-				std::from_chars(literal.data(), literal.data() + literal.size(), val);
-			}
-			}, to_number);
-
-		return to_number;
-	}
-
-	void ssaindex_to_string(int32_t ssaindex, std::string& str) const {
-		constexpr size_t max_chars = std::numeric_limits<int32_t>::digits10 + 2;
-		char buffer[max_chars];
-		auto [ptr, ec] = std::to_chars(buffer, buffer + max_chars, ssaindex);
-		if (ec == std::errc{}) {
-			str.append(buffer, ptr - buffer);
-		}
-	}
-
-	[[nodiscard]] OpCode get_opcode(TypeOfNode node_type) const noexcept {
-		switch (node_type) {
-		case TypeOfNode::Addition:			return OpCode::add;
-		case TypeOfNode::Subtraction:		return OpCode::sub;
-		case TypeOfNode::Multiplication:	return OpCode::mul;
-		case TypeOfNode::Division:			return OpCode::div;
-		case TypeOfNode::Power:				return OpCode::pow;
-		case TypeOfNode::Negation:			return OpCode::neg;
-		case TypeOfNode::Percent:			return OpCode::pct;
-		}
-	}
-
-	void binary_op_IR_generate(IRInstruction& left_child, IRInstruction& right_child) {
-		ir_instructions.emplace_back(
-			std::monostate{},
-			get_opcode(ast.node_types[i]),
-			IRInstructionType::f64,
-			i,
-			ast.child_start[i],
-			2,
-			0
-		);
-		auto& current_instr = ir_instructions.back();
-		ir_instructions[operands_pool[current_instr.operands_start].value()].use_count++;
-		ir_instructions[operands_pool[current_instr.operands_start + 1].value()].use_count++;
-	}
-
 public:
-	IRGenerator(const ParserResult& ast)
+	explicit IRGenerator(const ParserResult& ast)
 		: ast(ast.value())
 		, operands_pool(ast.value().child_relationships)
 	{
@@ -903,6 +844,68 @@ public:
 			}
 		}
 	}
+private:
+
+	[[nodiscard]] PayloadType string_to_number(std::string_view literal) const noexcept {
+		PayloadType to_number;
+
+		to_number.emplace<double>();
+
+		std::visit([&literal](auto& val) {
+			using T = std::decay_t<decltype(val)>;
+
+			if constexpr (std::is_same_v<T, std::monostate>) {
+				return;
+			}
+			else {
+				std::from_chars(literal.data(), literal.data() + literal.size(), val);
+			}
+			}, to_number);
+
+		return to_number;
+	}
+
+	void ssaindex_to_string(int32_t ssaindex, std::string& str) const {
+		constexpr size_t max_chars = std::numeric_limits<int32_t>::digits10 + 2;
+		char buffer[max_chars];
+		auto [ptr, ec] = std::to_chars(buffer, buffer + max_chars, ssaindex);
+		if (ec == std::errc{}) {
+			str.append(buffer, ptr - buffer);
+		}
+	}
+
+	[[nodiscard]] OpCode get_opcode(TypeOfNode node_type) const noexcept {
+		switch (node_type) {
+		case TypeOfNode::Addition:			return OpCode::add;
+		case TypeOfNode::Subtraction:		return OpCode::sub;
+		case TypeOfNode::Multiplication:	return OpCode::mul;
+		case TypeOfNode::Division:			return OpCode::div;
+		case TypeOfNode::Power:				return OpCode::pow;
+		case TypeOfNode::Negation:			return OpCode::neg;
+		case TypeOfNode::Percent:			return OpCode::pct;
+		}
+	}
+
+	void binary_op_IR_generate(IRInstruction& left_child, IRInstruction& right_child) {
+		ir_instructions.emplace_back(
+			std::monostate{},
+			get_opcode(ast.node_types[i]),
+			IRInstructionType::f64,
+			i,
+			ast.child_start[i],
+			2,
+			0
+		);
+		auto& current_instr = ir_instructions.back();
+		ir_instructions[operands_pool[current_instr.operands_start].value()].use_count++;
+		ir_instructions[operands_pool[current_instr.operands_start + 1].value()].use_count++;
+	}
+
+	AbstractSyntaxTree_SoA ast;
+
+	std::vector<IRInstruction> ir_instructions;
+	std::vector<ExpectedIndex> operands_pool;
+	int i = 0;
 };
 
 
@@ -1031,17 +1034,7 @@ public:
 			}, (instructions.rbegin() + 1)->payload);
 	}
 
-
 private:
-	static constexpr std::array<bitmask, 256> ascii_symbols = lookup_table_fill();
-
-	bitmask current_settings;
-
-	std::vector<IRInstruction> instructions;
-	std::vector<ExpectedIndex> operands_pool;
-
-	ErrorHandler error_handler;
-
 	template<ConstantType T>
 	[[nodiscard]] std::expected<PayloadType, TypeOfError> fold_constants_pow(T base, T exponent) const noexcept {
 		using base_T = std::decay_t<decltype(base)>;
@@ -1113,6 +1106,15 @@ private:
 		case OpCode::pct: return '%';
 		}
 	}
+
+	static constexpr std::array ascii_symbols = lookup_table_fill();
+
+	bitmask current_settings;
+
+	std::vector<IRInstruction> instructions;
+	std::vector<ExpectedIndex> operands_pool;
+
+	ErrorHandler error_handler;
 };
 
 
