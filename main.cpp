@@ -114,16 +114,6 @@ enum class TypeOfToken {
 };
 
 struct Token {
-	Token() = default;
-
-	Token(int num, TypeOfToken type, std::string_view value)
-		: index(num)
-		, type(type)
-		, value(value)
-	{
-
-	}
-
 	void print() const {
 		std::println(" [index: {:<13} type: {:<23} value: {:<1} ]",
 			std::to_string(index) + ";",
@@ -132,8 +122,8 @@ struct Token {
 		);
 	}
 
-	int32_t index;
-	TypeOfToken type;
+	int32_t index = 0;
+	TypeOfToken type{};
 	std::string_view value;
 };
 
@@ -727,12 +717,12 @@ using PayloadType = std::variant<std::monostate, int32_t, float, double>;
 
 struct IRInstruction {
 	PayloadType payload;
-	OpCode opcode;
-	IRInstructionType type;
-	int32_t ssa_index;
-	int32_t operands_start;
-	int32_t operands_count;
-	int32_t use_count;
+	OpCode opcode{};
+	IRInstructionType type{};
+	int32_t ssa_index = 0;
+	int32_t operands_start = 0;
+	int32_t operands_count = 0;
+	int32_t use_count = 0;
 	bool is_higher_precision = false;
 };
 
@@ -845,7 +835,6 @@ public:
 		}
 	}
 private:
-
 	[[nodiscard]] PayloadType string_to_number(std::string_view literal) const noexcept {
 		PayloadType to_number;
 
