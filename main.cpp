@@ -116,7 +116,7 @@ enum class TypeOfToken {
 struct Token {
 	int32_t index;
 	TypeOfToken type;
-	std::string value;
+	std::string_view value;
 
 	Token() = default;
 
@@ -124,14 +124,6 @@ struct Token {
 		: index(num)
 		, type(type)
 		, value(value)
-	{
-
-	}
-
-	Token(int num, TypeOfToken type, uint8_t single_char)
-		: index(num)
-		, type(type)
-		, value(1, static_cast<char>(single_char)) 
 	{
 
 	}
@@ -160,7 +152,7 @@ enum class TypeOfError {
 };
 
 struct ErrorMessage {
-	std::string message;
+	std::string_view message;
 	std::optional<Token> defect_token;
 };
 
@@ -171,7 +163,7 @@ using Errors = std::vector<ErrorMessage>;
 struct ErrorHandler {
 	Errors messages;
 
-	[[nodiscard]] std::string get_message(TypeOfError type) const noexcept {
+	[[nodiscard]] std::string_view get_message(TypeOfError type) const noexcept {
 		switch (type) {
 		case TypeOfError::NoInput:
 			return "You haven't entered anything. Was this accidental?";
@@ -262,27 +254,22 @@ class Lexer {
 	bitmask current_symbol_type = 0;
 	uint8_t current_symbol_value = 0;
 
-	[[nodiscard]] std::expected<Token, TypeOfError> number_tokenize() {
-		Token number;
+	[[nodiscard]] std::expected<Token, TypeOfError> number_tokenize() noexcept {
+		bitmask in_number_symbols = MASK_NUMBER | MASK_FLOATING_POINT | MASK_SPACE;
 		bool has_point = false;
 
-		bitmask in_number_symbols = MASK_NUMBER | MASK_FLOATING_POINT | MASK_SPACE;
-
+		auto num_start = it;
+		size_t num_length = 0;
 		while (current_symbol_type & in_number_symbols) {
 			if (current_symbol_type & MASK_FLOATING_POINT) {
 				if (has_point) {
 					return std::unexpected(TypeOfError::InvalidFloatingPoint);
 				}
-				else {
-					number.value.push_back('.');
-					has_point = true;
-				}
-			}
-			else if (!(current_symbol_type & MASK_SPACE)) {
-				number.value.push_back(current_symbol_value);
+				has_point = true;
 			}
 
-			++it;
+			++it; ++num_length;
+
 			if (it == expr.end()) {
 				break;
 			}
@@ -290,19 +277,20 @@ class Lexer {
 			current_symbol_value = *it;
 		}
 
-		if (static_cast<bitmask>(ascii_symbols[number.value.back()]) & MASK_FLOATING_POINT) {
+		bitmask num_end_symbol = static_cast<bitmask>(ascii_symbols[*(--it)]);
+		if (num_end_symbol & MASK_FLOATING_POINT) {
 			return std::unexpected(TypeOfError::InvalidFloatingPoint);
 		}
 
-		return number;
+		return Token(i, TypeOfToken::Number, std::string_view(num_start, num_start + num_length));
 	}
 
 	[[nodiscard]] bool is_negationsign(const std::vector<Token>& tokens) const noexcept {
 		if (tokens.empty()) {
 			return true;
 		}
-		char prev_symbol = tokens[tokens.back().index].value[0];
-		bool is_prev_token_an_operator = (ascii_symbols[prev_symbol] & (MASK_OPERATOR | MASK_OPEN_PARENTHESIS));
+		auto prev_symbol = tokens.back().value.data();
+		bool is_prev_token_an_operator = (ascii_symbols[*prev_symbol] & (MASK_OPERATOR | MASK_OPEN_PARENTHESIS));
 		return is_prev_token_an_operator;
 	}
 
@@ -312,61 +300,56 @@ public:
 	[[nodiscard]] ExpectedTokens tokenize() {
 		std::vector<Token> tokens;
 
+		std::string_view current_symbol_value_it;
 		for (; it != expr.end(); ++it) {
 			current_symbol_value = static_cast<bitmask>(*it);
 			if (ascii_symbols[current_symbol_value] == 0) {
-				Token defect_token(i, TypeOfToken::Default, current_symbol_value);
+				Token defect_token(i, TypeOfToken::Default, current_symbol_value_it);
 				error_handler.register_token(defect_token, TypeOfError::UnknownSymbol);
 				break;
 			}
 
+			current_symbol_value_it = std::string_view(it, it + 1);
 			current_symbol_type = ascii_symbols[current_symbol_value];
+
 			if (current_symbol_type & MASK_SPACE) continue;
 
 			if (current_symbol_type & (MASK_OPERATOR | mask_parentheses)) {
 				switch (current_symbol_value) {
 				case '+':
-					tokens.emplace_back(i, TypeOfToken::Plus, current_symbol_value);
+					tokens.emplace_back(i, TypeOfToken::Plus, current_symbol_value_it);
 					break;
 				case '-':
-					if (is_negationsign(tokens)) {
-						tokens.emplace_back(i, TypeOfToken::NegationSign, '~');
-					}
-					else {
-						tokens.emplace_back(i, TypeOfToken::Minus, current_symbol_value);
-					}
+					tokens.emplace_back(i, (is_negationsign(tokens)) ? TypeOfToken::NegationSign : TypeOfToken::Minus, current_symbol_value_it);
 					break;
 				case '*':
-					tokens.emplace_back(i, TypeOfToken::MultiplicationSign, current_symbol_value);
+					tokens.emplace_back(i, TypeOfToken::MultiplicationSign, current_symbol_value_it);
 					break;
 				case '/':
-					tokens.emplace_back(i, TypeOfToken::DivisionSign, current_symbol_value);
+					tokens.emplace_back(i, TypeOfToken::DivisionSign, current_symbol_value_it);
 					break;
 				case '(':
-					tokens.emplace_back(i, TypeOfToken::OpenParenthesis, current_symbol_value);
+					tokens.emplace_back(i, TypeOfToken::OpenParenthesis, current_symbol_value_it);
 					break;
 				case ')':
-					tokens.emplace_back(i, TypeOfToken::CloseParenthesis, current_symbol_value);
+					tokens.emplace_back(i, TypeOfToken::CloseParenthesis, current_symbol_value_it);
 					break;
 				case '%':
-					tokens.emplace_back(i, TypeOfToken::PercentSign, current_symbol_value);
+					tokens.emplace_back(i, TypeOfToken::PercentSign, current_symbol_value_it);
 					break;
 				case '^':
-					tokens.emplace_back(i, TypeOfToken::PowerSign, current_symbol_value);
+					tokens.emplace_back(i, TypeOfToken::PowerSign, current_symbol_value_it);
 					break;
 				}
 			}
 			else if (current_symbol_type & MASK_NUMBER) {
 				std::expected<Token, TypeOfError> number = number_tokenize();
 				if (!number.has_value()) {
-					Token defect_number(i, TypeOfToken::Default, current_symbol_value);
+					Token defect_number(i, TypeOfToken::Default, current_symbol_value_it);
 					error_handler.register_token(defect_number, TypeOfError::InvalidFloatingPoint);
 					break;
 				}
-				number->index = i;
-				number->type = TypeOfToken::Number;
 				tokens.push_back(number.value());
-				--it;
 			}
 			++i;
 		}
@@ -375,7 +358,7 @@ public:
 			return std::unexpected(std::move(error_handler.messages));
 		}
 
-		tokens.emplace_back(i, TypeOfToken::EndOfFile, '\0');
+		tokens.emplace_back(i, TypeOfToken::EndOfFile, std::string_view{});
 
 		if (tokens[0].type == TypeOfToken::EndOfFile) {
 			error_handler.register_token(tokens[0], TypeOfError::NoInput);
@@ -426,14 +409,14 @@ using ExpectedIndex = std::expected<int32_t, TypeOfError>;
 
 struct AbstractSyntaxTree_SoA {
 	std::vector<TypeOfNode> node_types;
-	std::vector<std::string> node_data;
+	std::vector<std::string_view> node_data;
 	std::vector<ExpectedIndex> child_relationships;
 	std::vector<int32_t> child_start;
 	std::vector<int32_t> child_count;
 
 	[[nodiscard]] int32_t add_node(const Token& token) {
 		node_types.push_back(typeoftoken_to_typeofnode(token.type));
-		node_data.push_back(token.value);
+		node_data.emplace_back(token.value.data(), token.value.size());
 		child_start.push_back(-1);
 		child_count.push_back(0);
 		return node_types.size() - 1;
@@ -441,7 +424,7 @@ struct AbstractSyntaxTree_SoA {
 
 	[[nodiscard]] int32_t add_node(const Token& token, const ExpectedIndex& right_child_index) {
 		node_types.push_back(typeoftoken_to_typeofnode(token.type));
-		node_data.push_back(token.value);
+		node_data.emplace_back(token.value.data(), token.value.size());
 		child_start.push_back(child_relationships.size());
 		child_count.push_back(1);
 		child_relationships.push_back(right_child_index);
@@ -450,7 +433,7 @@ struct AbstractSyntaxTree_SoA {
 
 	[[nodiscard]] int32_t add_node(const Token& token, const ExpectedIndex& left_child_index, const ExpectedIndex& right_child_index) {
 		node_types.push_back(typeoftoken_to_typeofnode(token.type));
-		node_data.push_back(token.value);
+		node_data.emplace_back(token.value.data(), token.value.size());
 		child_start.push_back(child_relationships.size());
 		child_count.push_back(2);
 		child_relationships.push_back(left_child_index);
@@ -590,7 +573,7 @@ class ExpressionConverter {
 
 	bool parent_is_power = false;
 
-	[[nodiscard]] std::string get_unicode_power_exponent(const std::string& exponent) const {
+	[[nodiscard]] std::string get_unicode_power_exponent(std::string_view exponent) const {
 		std::string exponent_expr;
 		for (int i = 0; i < exponent.size(); ++i) {
 			switch (exponent[i]) {
@@ -616,9 +599,9 @@ class ExpressionConverter {
 				unicode_text.push_back(get_unicode_power_exponent(ast.node_data[index_field]));
 			}
 			else {
-				unicode_text.push_back(ast.node_data[index_field]);
+				unicode_text.emplace_back(ast.node_data[index_field]);
 			}
-			latex_text.push_back(ast.node_data[index_field]);
+			latex_text.emplace_back(ast.node_data[index_field]);
 			return;
 		}
 
