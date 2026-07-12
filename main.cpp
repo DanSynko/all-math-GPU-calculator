@@ -132,9 +132,9 @@ enum class TypeOfError {
 	NoInput,
 	UnknownSymbol,
 	ParenthesesImbalance,
-	ExtraOperator,
 	InvalidOperator,
 	UnexpectedEnd,
+	UnexpectedNumber,
 	InvalidPrefixOperator,
 	InvalidFloatingPoint,
 	DivByZero,
@@ -175,10 +175,10 @@ private:
 			return "You haven't entered anything. Was this accidental?";
 		case TypeOfError::UnknownSymbol:
 			return "The unknown symbol has been detected. It isn't math symbol or don't supported by this program. The list of supported symbols you can check by 'help' command";
-		case TypeOfError::ExtraOperator:
-			return "An extra operator was detected.";
 		case TypeOfError::UnexpectedEnd:
 			return "The end of the expression or the subexpression has suddenly detected.";
+		case TypeOfError::UnexpectedNumber:
+			return "Unexpected number detected. Numbers cannot be separated by spaces; use operators or merge them.";
 		case TypeOfError::InvalidOperator:
 			return "Invalid operator was detected: A binary-operator have less than two operands or a postfix-operator is before the operand.";
 		case TypeOfError::ParenthesesImbalance:
@@ -188,7 +188,7 @@ private:
 		case TypeOfError::InvalidFloatingPoint:
 			return "An unexpected floating point was detected outside the operand, or there were two or more of them. It must be a single one and located inside the operand.";
 		case TypeOfError::DivByZero:
-			return "You cannot divide by zero.";
+			return "Division by zero is undefined.";
 		case TypeOfError::UnsupportedComplex:
 			return "Complex numbers are not supported in the program at the moment. Apologize for the inconvenience.";
 		}
@@ -291,7 +291,7 @@ public:
 				std::expected<Token, TypeOfError> number = tokenize_number();
 				if (!number.has_value()) {
 					Token defect_number(i, TypeOfToken::Default, current_symbol_value_it);
-					error_handler.register_token(defect_number, TypeOfError::InvalidFloatingPoint);
+					error_handler.register_token(defect_number, number.error());
 					break;
 				}
 				tokens.push_back(number.value());
@@ -309,7 +309,7 @@ public:
 	}	
 private:
 	[[nodiscard]] std::expected<Token, TypeOfError> tokenize_number() noexcept {
-		bitmask in_number_symbols = MASK_NUMBER | MASK_FLOATING_POINT | MASK_SPACE;
+		bitmask in_number_symbols = MASK_NUMBER | MASK_FLOATING_POINT;
 		bool has_point = false;
 
 		auto num_start = it;
@@ -441,7 +441,23 @@ public:
 		error_handler.messages.reserve(expr_strings_count);
 	}
 
-	ExpectedIndex start_pratt_parser(int rbp) {
+	[[nodiscard]] ParserResult parse() {
+		ExpectedIndex result = start_pratt_parser(0);
+		if (!result.has_value()) {
+			error_handler.register_token(tokens[i], result.error());
+			return std::unexpected(error_handler.messages);
+		}
+		if (!error_handler.messages.empty()) {
+			return std::unexpected(error_handler.messages);
+		}
+		if (i != tokens.back().index) {
+			error_handler.register_token(tokens[i], TypeOfError::UnexpectedEnd);
+			return std::unexpected(error_handler.messages);
+		}
+		return ast;
+	}
+private:
+	[[nodiscard]] ExpectedIndex start_pratt_parser(int rbp) {
 		if (i == tokens.size()) return 0;
 
 		Token current_token = tokens[i];
@@ -459,6 +475,10 @@ public:
 			return std::unexpected(left.error());
 		}
 
+		if (i != tokens.size() && tokens[i].type == TypeOfToken::Number) {
+			return std::unexpected(TypeOfError::UnexpectedNumber);
+		}
+
 		while (rbp < lookahead_lbp(tokens[i].type)) {
 			Token op_token = tokens[i];
 			i++;
@@ -467,19 +487,6 @@ public:
 
 		return left;
 	}
-
-	[[nodiscard]] ParserResult parse() {
-		start_pratt_parser(0);
-		if (!error_handler.messages.empty()) {
-			return std::unexpected(error_handler.messages);
-		}
-		if (i != tokens.back().index) {
-			error_handler.register_token(tokens[i], TypeOfError::UnexpectedEnd);
-			return std::unexpected(error_handler.messages);
-		}
-		return ast;
-	}
-private:
 
 	[[nodiscard]] int lookahead_lbp(TypeOfToken token_type) const noexcept {
 		switch (token_type) {
