@@ -235,13 +235,18 @@ using ExpectedTokens = std::expected<std::vector<Token>, Errors>;
 
 class Lexer {
 public:
-	explicit Lexer(std::string_view expr) : expr(expr), it(expr.begin()) {}
+	explicit Lexer(std::string_view expression) : expression(expression), it(expression.begin()) {}
 
 	[[nodiscard]] ExpectedTokens tokenize() {
+		if (expression.empty()) {
+			error_handler.register_semantic(TypeOfError::NoInput);
+			return std::unexpected(std::move(error_handler.messages));
+		}
+
 		std::vector<Token> tokens;
 
 		std::string_view current_symbol_value_it;
-		for (; it != expr.end(); ++it) {
+		for (; it != expression.end(); ++it) {
 			current_symbol_value = static_cast<bitmask>(*it);
 			if (ascii_symbols[current_symbol_value] == 0) {
 				Token defect_token(i, TypeOfToken::Default, current_symbol_value_it);
@@ -300,26 +305,9 @@ public:
 
 		tokens.emplace_back(i, TypeOfToken::EndOfFile, std::string_view{});
 
-		if (tokens[0].type == TypeOfToken::EndOfFile) {
-			error_handler.register_token(tokens[0], TypeOfError::NoInput);
-			return std::unexpected(std::move(error_handler.messages));
-		}
-
-
 		return tokens;
 	}	
 private:
-	static constexpr std::array ascii_symbols = lookup_table_fill();
-	bitmask mask_parentheses = MASK_OPEN_PARENTHESIS | MASK_CLOSE_PARENTHESIS;
-
-	ErrorHandler error_handler;
-
-	std::string_view expr;
-	std::string_view::const_iterator it;
-	int i = 0;
-	bitmask current_symbol_type = 0;
-	uint8_t current_symbol_value = 0;
-
 	[[nodiscard]] std::expected<Token, TypeOfError> tokenize_number() noexcept {
 		bitmask in_number_symbols = MASK_NUMBER | MASK_FLOATING_POINT | MASK_SPACE;
 		bool has_point = false;
@@ -336,7 +324,7 @@ private:
 
 			++it; ++num_length;
 
-			if (it == expr.end()) {
+			if (it == expression.end()) {
 				break;
 			}
 			current_symbol_type = ascii_symbols[*it];
@@ -359,6 +347,18 @@ private:
 		bool is_prev_token_an_operator = (ascii_symbols[*prev_symbol] & (MASK_OPERATOR | MASK_OPEN_PARENTHESIS));
 		return is_prev_token_an_operator;
 	}
+
+
+	static constexpr std::array ascii_symbols = lookup_table_fill();
+	bitmask mask_parentheses = MASK_OPEN_PARENTHESIS | MASK_CLOSE_PARENTHESIS;
+
+	ErrorHandler error_handler;
+
+	std::string_view expression;
+	std::string_view::const_iterator it;
+	int i = 0;
+	bitmask current_symbol_type = 0;
+	uint8_t current_symbol_value = 0;
 };
 
 
