@@ -128,7 +128,7 @@ struct Token {
 };
 
 
-enum class TypeOfError {
+enum class ErrorType {
 	NoInput,
 	UnknownSymbol,
 	ParenthesesImbalance,
@@ -151,15 +151,15 @@ using Errors = std::vector<ErrorMessage>;
 
 class ErrorHandler {
 public:
-	void register_token(const Token& defect_token, TypeOfError error_type) {
+	void register_token(const Token& defect_token, ErrorType error_type) {
 		messages.emplace_back(get_message(error_type), defect_token);
 	}
 
-	void register_semantic(TypeOfError error_type) {
+	void register_semantic(ErrorType error_type) {
 		messages.emplace_back(get_message(error_type));
 	}
 
-	[[nodiscard]] Errors panic_mode(const std::vector<Token>& tokens, int i, TypeOfError left_error, int defect_index) {
+	[[nodiscard]] Errors panic_mode(const std::vector<Token>& tokens, int i, ErrorType left_error, int defect_index) {
 		register_token(tokens[defect_index], left_error);
 		while (tokens[i].type != TypeOfToken::EndOfFile) {
 			i++;
@@ -169,27 +169,27 @@ public:
 
 	Errors messages;
 private:
-	[[nodiscard]] std::string_view get_message(TypeOfError type) const noexcept {
+	[[nodiscard]] std::string_view get_message(ErrorType type) const noexcept {
 		switch (type) {
-		case TypeOfError::NoInput:
+		case ErrorType::NoInput:
 			return "You haven't entered anything. Was this accidental?";
-		case TypeOfError::UnknownSymbol:
+		case ErrorType::UnknownSymbol:
 			return "The unknown symbol has been detected. It isn't math symbol or don't supported by this program. The list of supported symbols you can check by 'help' command";
-		case TypeOfError::UnexpectedEnd:
+		case ErrorType::UnexpectedEnd:
 			return "The end of the expression or the subexpression has suddenly detected.";
-		case TypeOfError::UnexpectedNumber:
+		case ErrorType::UnexpectedNumber:
 			return "Unexpected number detected. Numbers cannot be separated by spaces; use operators or merge them.";
-		case TypeOfError::InvalidOperator:
+		case ErrorType::InvalidOperator:
 			return "Invalid operator was detected: A binary-operator have less than two operands or a postfix-operator is before the operand.";
-		case TypeOfError::ParenthesesImbalance:
+		case ErrorType::ParenthesesImbalance:
 			return "The count of open- and close parentheses isn't same.";
-		case TypeOfError::InvalidPrefixOperator:
+		case ErrorType::InvalidPrefixOperator:
 			return "The prefix-operator was detected after the operand. It must be before an operand.";
-		case TypeOfError::InvalidFloatingPoint:
+		case ErrorType::InvalidFloatingPoint:
 			return "An unexpected floating point was detected outside the operand, or there were two or more of them. It must be a single one and located inside the operand.";
-		case TypeOfError::DivByZero:
+		case ErrorType::DivByZero:
 			return "Division by zero is undefined.";
-		case TypeOfError::UnsupportedComplex:
+		case ErrorType::UnsupportedComplex:
 			return "Complex numbers are not supported in the program at the moment. Apologize for the inconvenience.";
 		}
 	}
@@ -239,7 +239,7 @@ public:
 
 	[[nodiscard]] ExpectedTokens tokenize() {
 		if (expression.empty()) {
-			error_handler.register_semantic(TypeOfError::NoInput);
+			error_handler.register_semantic(ErrorType::NoInput);
 			return std::unexpected(std::move(error_handler.messages));
 		}
 
@@ -250,7 +250,7 @@ public:
 			current_symbol_value = static_cast<bitmask>(*it);
 			if (ascii_symbols[current_symbol_value] == 0) {
 				Token defect_token(i, TypeOfToken::Default, current_symbol_value_it);
-				error_handler.register_token(defect_token, TypeOfError::UnknownSymbol);
+				error_handler.register_token(defect_token, ErrorType::UnknownSymbol);
 				break;
 			}
 
@@ -288,7 +288,7 @@ public:
 				}
 			}
 			else if (current_symbol_type & MASK_NUMBER) {
-				std::expected<Token, TypeOfError> number = tokenize_number();
+				std::expected<Token, ErrorType> number = tokenize_number();
 				if (!number.has_value()) {
 					Token defect_number(i, TypeOfToken::Default, current_symbol_value_it);
 					error_handler.register_token(defect_number, number.error());
@@ -308,7 +308,7 @@ public:
 		return tokens;
 	}	
 private:
-	[[nodiscard]] std::expected<Token, TypeOfError> tokenize_number() noexcept {
+	[[nodiscard]] std::expected<Token, ErrorType> tokenize_number() noexcept {
 		bitmask in_number_symbols = MASK_NUMBER | MASK_FLOATING_POINT;
 		bool has_point = false;
 
@@ -317,7 +317,7 @@ private:
 		while (current_symbol_type & in_number_symbols) {
 			if (current_symbol_type & MASK_FLOATING_POINT) {
 				if (has_point) {
-					return std::unexpected(TypeOfError::InvalidFloatingPoint);
+					return std::unexpected(ErrorType::InvalidFloatingPoint);
 				}
 				has_point = true;
 			}
@@ -333,7 +333,7 @@ private:
 
 		bitmask num_end_symbol = static_cast<bitmask>(ascii_symbols[*(--it)]);
 		if (num_end_symbol & MASK_FLOATING_POINT) {
-			return std::unexpected(TypeOfError::InvalidFloatingPoint);
+			return std::unexpected(ErrorType::InvalidFloatingPoint);
 		}
 
 		return Token(i, TypeOfToken::Number, std::string_view(num_start, num_start + num_length));
@@ -362,7 +362,7 @@ private:
 };
 
 
-enum class TypeOfNode {
+enum class NodeType {
 	Number,
 	Addition,
 	Subtraction,
@@ -373,7 +373,7 @@ enum class TypeOfNode {
 	Percent
 };
 
-using ExpectedIndex = std::expected<int32_t, TypeOfError>;
+using ExpectedIndex = std::expected<int32_t, ErrorType>;
 
 class AbstractSyntaxTree_SoA {
 public:
@@ -404,30 +404,30 @@ public:
 		return node_types.size() - 1;
 	}
 
-	std::vector<TypeOfNode> node_types;
+	std::vector<NodeType> node_types;
 	std::vector<std::string_view> node_data;
 	std::vector<ExpectedIndex> child_relationships;
 	std::vector<int32_t> child_start;
 	std::vector<int32_t> child_count;
 private:
-	[[nodiscard]] TypeOfNode typeoftoken_to_typeofnode(TypeOfToken token_type) const noexcept {
+	[[nodiscard]] NodeType typeoftoken_to_typeofnode(TypeOfToken token_type) const noexcept {
 		switch (token_type) {
 		case TypeOfToken::Number:
-			return TypeOfNode::Number;
+			return NodeType::Number;
 		case TypeOfToken::Plus:
-			return TypeOfNode::Addition;
+			return NodeType::Addition;
 		case TypeOfToken::Minus:
-			return TypeOfNode::Subtraction;
+			return NodeType::Subtraction;
 		case TypeOfToken::MultiplicationSign:
-			return TypeOfNode::Multiplication;
+			return NodeType::Multiplication;
 		case TypeOfToken::DivisionSign:
-			return TypeOfNode::Division;
+			return NodeType::Division;
 		case TypeOfToken::NegationSign:
-			return TypeOfNode::Negation;
+			return NodeType::Negation;
 		case TypeOfToken::PowerSign:
-			return TypeOfNode::Power;
+			return NodeType::Power;
 		case TypeOfToken::PercentSign:
-			return TypeOfNode::Percent;
+			return NodeType::Percent;
 		}
 	}
 };
@@ -451,7 +451,7 @@ public:
 			return std::unexpected(error_handler.messages);
 		}
 		if (i != tokens.back().index) {
-			error_handler.register_token(tokens[i], TypeOfError::UnexpectedEnd);
+			error_handler.register_token(tokens[i], ErrorType::UnexpectedEnd);
 			return std::unexpected(error_handler.messages);
 		}
 		return ast;
@@ -468,7 +468,7 @@ private:
 		if (!left.has_value()) {
 			i--;
 			if (error_handler.messages.size() < expr_strings_count) {
-				int defect_index = (left.error() == TypeOfError::ParenthesesImbalance) ? openp_index : i;
+				int defect_index = (left.error() == ErrorType::ParenthesesImbalance) ? openp_index : i;
 				Errors parse_errors = error_handler.panic_mode(tokens, i, left.error(), defect_index);
 				errors_count++;
 			}
@@ -476,7 +476,7 @@ private:
 		}
 
 		if (i != tokens.size() && tokens[i].type == TypeOfToken::Number) {
-			return std::unexpected(TypeOfError::UnexpectedNumber);
+			return std::unexpected(ErrorType::UnexpectedNumber);
 		}
 
 		while (rbp < lookahead_lbp(tokens[i].type)) {
@@ -518,7 +518,7 @@ private:
 			}
 			else {
 				openp_index = current_openp_index;
-				return std::unexpected(TypeOfError::ParenthesesImbalance);
+				return std::unexpected(ErrorType::ParenthesesImbalance);
 			}
 			return open_p;
 		}
@@ -526,10 +526,10 @@ private:
 			return ast.value().add_node(token);
 		}
 		else if (token.type == TypeOfToken::EndOfFile) {
-			return std::unexpected(TypeOfError::UnexpectedEnd);
+			return std::unexpected(ErrorType::UnexpectedEnd);
 		}
 		else {
-			return std::unexpected(TypeOfError::InvalidOperator);
+			return std::unexpected(ErrorType::InvalidOperator);
 		}
 	}
 
@@ -542,7 +542,7 @@ private:
 			right = start_pratt_parser(lookahead_lbp(token.type) - 1);
 			return ast.value().add_node(token, left, right);
 		case TypeOfToken::NegationSign:
-			return std::unexpected(TypeOfError::InvalidPrefixOperator);
+			return std::unexpected(ErrorType::InvalidPrefixOperator);
 		default:
 			right = start_pratt_parser(lookahead_lbp(token.type));
 			return ast.value().add_node(token, left, right);
@@ -615,25 +615,25 @@ private:
 		// order (from end to start), causing the text to be assembled backwards. 
 		// The resulting string must be flipped using std::reverse inside to_latex_and_unicode_text().
 		switch (ast.node_types[index_field]) {
-		case TypeOfNode::Addition:
+		case NodeType::Addition:
 			expr_converter(--index_field, latex_text, unicode_text);
 			latex_text.push_back(" + ");
 			unicode_text.push_back(parent_is_power ? "⁺" : " + ");
 			expr_converter(--index_field, latex_text, unicode_text);
 			break;
-		case TypeOfNode::Subtraction:
+		case NodeType::Subtraction:
 			expr_converter(--index_field, latex_text, unicode_text);
 			latex_text.push_back(" − ");
 			unicode_text.push_back(parent_is_power ? "⁻" : " − ");
 			expr_converter(--index_field, latex_text, unicode_text);
 			break;
-		case TypeOfNode::Multiplication:
+		case NodeType::Multiplication:
 			expr_converter(--index_field, latex_text, unicode_text);
 			latex_text.push_back(" \\cdot ");
 			unicode_text.push_back(" ⋅ ");
 			expr_converter(--index_field, latex_text, unicode_text);
 			break;
-		case TypeOfNode::Division:
+		case NodeType::Division:
 			latex_text.push_back("}");
 			expr_converter(--index_field, latex_text, unicode_text);
 			latex_text.push_back("}{");
@@ -641,17 +641,17 @@ private:
 			expr_converter(--index_field, latex_text, unicode_text);
 			latex_text.push_back("\\frac{");
 			break;
-		case TypeOfNode::Negation:
+		case NodeType::Negation:
 			expr_converter(--index_field, latex_text, unicode_text);
 			latex_text.push_back("−");
 			unicode_text.push_back("−");
 			break;
-		case TypeOfNode::Percent:
+		case NodeType::Percent:
 			latex_text.push_back("\\,\\%");
 			unicode_text.push_back("%");
 			expr_converter(--index_field, latex_text, unicode_text);
 			break;
-		case TypeOfNode::Power:
+		case NodeType::Power:
 			latex_text.push_back("}");
 			parent_is_power = true;
 			expr_converter(--index_field, latex_text, unicode_text);
@@ -749,18 +749,18 @@ public:
 	[[nodiscard]] std::vector<IRInstruction> generate() {
 		for (; i < ast.node_types.size(); ++i) {
 			switch (ast.node_types[i]) {
-			case TypeOfNode::Addition:
-			case TypeOfNode::Subtraction:
-			case TypeOfNode::Multiplication:
-			case TypeOfNode::Division:
-			case TypeOfNode::Power: {
+			case NodeType::Addition:
+			case NodeType::Subtraction:
+			case NodeType::Multiplication:
+			case NodeType::Division:
+			case NodeType::Power: {
 				IRInstruction left_child = ir_instructions[operands_pool[ast.child_start[i]].value()];
 				IRInstruction right_child = ir_instructions[operands_pool[ast.child_start[i] + 1].value()];
 				binary_op_IR_generate(left_child, right_child);
 				continue;
 			}
-			case TypeOfNode::Negation:
-			case TypeOfNode::Percent: {
+			case NodeType::Negation:
+			case NodeType::Percent: {
 				ir_instructions.emplace_back(
 					std::monostate{},
 					get_opcode(ast.node_types[i]), 
@@ -774,7 +774,7 @@ public:
 				current_ir.type = ir_instructions[operands_pool[current_ir.operands_start].value()].type;
 				continue;
 			}
-			case TypeOfNode::Number: {
+			case NodeType::Number: {
 				auto numbered_payload = string_to_number(ast.node_data[i]);
 				ir_instructions.emplace_back(numbered_payload, OpCode::ldc, IRInstructionType::f64, i, -1, 0, 0);
 				continue;
@@ -870,15 +870,15 @@ private:
 		}
 	}
 
-	[[nodiscard]] OpCode get_opcode(TypeOfNode node_type) const noexcept {
+	[[nodiscard]] OpCode get_opcode(NodeType node_type) const noexcept {
 		switch (node_type) {
-		case TypeOfNode::Addition:			return OpCode::add;
-		case TypeOfNode::Subtraction:		return OpCode::sub;
-		case TypeOfNode::Multiplication:	return OpCode::mul;
-		case TypeOfNode::Division:			return OpCode::div;
-		case TypeOfNode::Power:				return OpCode::pow;
-		case TypeOfNode::Negation:			return OpCode::neg;
-		case TypeOfNode::Percent:			return OpCode::pct;
+		case NodeType::Addition:			return OpCode::add;
+		case NodeType::Subtraction:		return OpCode::sub;
+		case NodeType::Multiplication:	return OpCode::mul;
+		case NodeType::Division:			return OpCode::div;
+		case NodeType::Power:				return OpCode::pow;
+		case NodeType::Negation:			return OpCode::neg;
+		case NodeType::Percent:			return OpCode::pct;
 		}
 	}
 
@@ -919,7 +919,7 @@ public:
 
 	}
 	
-	using OptimizerResult = std::expected<std::vector<IRInstruction>, TypeOfError>;
+	using OptimizerResult = std::expected<std::vector<IRInstruction>, ErrorType>;
 	[[nodiscard]] OptimizerResult optimize() {
 		for (auto& i : instructions) {
 			if (ascii_symbols[get_opcode_symbol(i.opcode)] & MASK_OPERATOR) {
@@ -929,7 +929,7 @@ public:
 				case OpCode::mul:
 				case OpCode::div:
 				case OpCode::pow: {
-					auto correct_result = std::visit([this, &i](const auto& l, const auto& r) -> std::expected<PayloadType, TypeOfError> {
+					auto correct_result = std::visit([this, &i](const auto& l, const auto& r) -> std::expected<PayloadType, ErrorType> {
 						using LeftT = std::decay_t<decltype(l)>;
 						using RightT = std::decay_t<decltype(r)>;
 
@@ -954,7 +954,7 @@ public:
 				}
 				case OpCode::neg:
 				case OpCode::pct: {
-					auto correct_result = std::visit([this, &i](const auto& r) -> std::expected<PayloadType, TypeOfError> {
+					auto correct_result = std::visit([this, &i](const auto& r) -> std::expected<PayloadType, ErrorType> {
 						using RightT = std::decay_t<decltype(r)>;
 
 						if constexpr (ConstantType<RightT>) {
@@ -1032,7 +1032,7 @@ public:
 
 private:
 	template<ConstantType T>
-	[[nodiscard]] std::expected<PayloadType, TypeOfError> fold_constants_pow(T base, T exponent) const noexcept {
+	[[nodiscard]] std::expected<PayloadType, ErrorType> fold_constants_pow(T base, T exponent) const noexcept {
 		using base_T = std::decay_t<decltype(base)>;
 		using exponent_T = std::decay_t<decltype(exponent)>;
 
@@ -1045,14 +1045,14 @@ private:
 		// Therefore, we simply check for the presence of any fractional part in the exponent (exponent_has_frac).
 		bool exponent_has_frac = exponent != std::trunc(exponent);
 		if (base < 0 && exponent_has_frac) {
-			return std::unexpected(TypeOfError::UnsupportedComplex);
+			return std::unexpected(ErrorType::UnsupportedComplex);
 		}
 		return std::pow(base, exponent);
 	}
 
 
 	template<ConstantType T>
-	[[nodiscard]] std::expected<PayloadType, TypeOfError> fold_constants(OpCode op, T left_child, T right_child) const noexcept {
+	[[nodiscard]] std::expected<PayloadType, ErrorType> fold_constants(OpCode op, T left_child, T right_child) const noexcept {
 		switch (op) {
 		case OpCode::add:
 			return left_child + right_child;
@@ -1064,7 +1064,7 @@ private:
 			return left_child * right_child;
 			break;
 		case OpCode::div:
-			if (right_child == 0.0) return std::unexpected(TypeOfError::DivByZero);
+			if (right_child == 0.0) return std::unexpected(ErrorType::DivByZero);
 			return left_child / right_child;
 		case OpCode::pow:
 			return fold_constants_pow(left_child, right_child);
