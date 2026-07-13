@@ -1,5 +1,7 @@
 ﻿#include "include/magic_enum-master/include/magic_enum/magic_enum.hpp"
 
+import cuda_backend;
+
 #ifdef _WIN32
 #include <Windows.h>
 #endif
@@ -1204,8 +1206,12 @@ int main()
 
 		if (!program_pipeline.has_value()) continue;
 
-		Console::print_to_center("\033[32m 6. RESULT: ", 0);
-		Console::print_to_center(std::string(std::format("{}\033[0m\n", program_pipeline.value())), 0);
+		Console::print_to_center("6 EVALUATE IN GPU.\n", 0);
+		CudaEvaluator evaluator;
+		double result = evaluator.evaluate(std::to_string(program_pipeline.value()));
+
+		Console::print_to_center("\033[32m 7. RESULT: ", 0);
+		Console::print_to_center(std::string(std::format("{}\033[0m\n", result)), 0);
 	}
 
 	return 0;
