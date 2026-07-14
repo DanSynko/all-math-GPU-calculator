@@ -1,4 +1,5 @@
 ﻿#include "include/magic_enum-master/include/magic_enum/magic_enum.hpp"
+#include "include/CLI11.hpp"
 
 import cuda_backend;
 
@@ -22,33 +23,65 @@ import cuda_backend;
 #else
 import std;
 #endif
+void print_help();
+
 
 using bitmask = uint8_t;
 
+enum Bitmask : bitmask {
+	fast_math_mode = 1 << 0
+};
+
 class Settings {
 public:
-	bitmask load_settings() {
-		std::ifstream out("config.txt");
-		bitmask loaded_settings = 0;
-		const bitmask default_settings = 0;
+	[[nodiscard]] bitmask load_from_config() {
+		std::ifstream in("config.txt");
 
-		if (!out.is_open()) {
+		if (!in.is_open()) {
 			return default_settings;
 		}
 
 		std::string line;
-		while (std::getline(out, line)) {
-			if (line.contains("fast_math=true")) {
-				loaded_settings |= Bitmask::fast_math;
+		while (std::getline(in, line)) {
+			if (line == "fast_math=true") {
+				loaded_settings |= Bitmask::fast_math_mode;
 			}
 		}
 
 		return loaded_settings;
 	}
+
+	[[nodiscard]] std::expected<bitmask, int> load_from_arguments(int main_argc, char* main_argv[]) {
+		CLI::App app(std::string{}, "all_math_GPU_calculator");
+		app.set_help_flag(std::string{}, std::string{});
+
+		bool enable_fast_math = false;
+		bool needs_print_help = false;
+
+		app.add_flag("-f,--fast-math", enable_fast_math, "Apply algebraic simplifications using unsafe math optimizations (disregarding IEEE 754)");
+		app.add_flag("-h,--help", needs_print_help, "Get information about the program.");
+
+		try {
+			app.parse(main_argc, main_argv);
+		}
+		catch (const CLI::ParseError& e) {
+			return std::unexpected(app.exit(e));
+		}
+
+		if (needs_print_help) {
+			print_help();
+			std::exit(0);
+		}
+
+		if (enable_fast_math) {
+			loaded_settings |= Bitmask::fast_math_mode;
+		}
+
+		return loaded_settings;
+	}
 private:
-	enum Bitmask : bitmask {
-		fast_math = 1 << 0
-	};
+	bitmask loaded_settings = 0;
+	const bitmask default_settings = 0;
 };
 
 
@@ -93,10 +126,6 @@ namespace Console {
 #endif
 	}
 }
-
-
-
-void print_help();
 
 
 
@@ -1116,19 +1145,30 @@ private:
 };
 
 
-int main()
+int main(int argc, char* argv[])
 {
 #ifdef _WIN32
 	SetConsoleOutputCP(CP_UTF8);
 	SetConsoleCP(CP_UTF8);
 #endif
 
+	Settings settings;
+
+	bitmask current_settings = settings.load_from_config();
+
+	if (argc > 1) {
+		std::expected<bitmask, int> args_settings = settings.load_from_arguments(argc, argv);
+		if (args_settings.has_value()) {
+			current_settings = args_settings.value();
+		}
+		else {
+			return args_settings.error();
+		}
+	}
+
 	std::println("Welcome to all-math-gpu-calculator! This project was created for performing calculations from basic arithmetic to advanced mathematics.)");
 	std::println("Enter: \n 1) 'exit' to close the program. \n 2) 'help' to show the expression printing guide and supported operators and symbols.\n");
 	std::println("The entered mathematical expression will be displayed in a clean mathematical format.\n");
-
-	Settings settings;
-	bitmask current_settings = settings.load_settings();
 
 	while (true) {
 		std::println("Enter any mathematical expression or command:");
@@ -1279,14 +1319,13 @@ void print_help() {
 	std::println();
 
 
-
 	Console::print_header(" [ 3. ⚙ SETTINGS. ] ");
 
-	std::println("\033[36m FORMAT: [Settings name]        -        [value] \033[0m");
+	std::println("\033[36m FORMAT: [Settings name]    -     [value]     -    [flags] \033[0m");
 	Console::print_divider("-");
 	std::println();
 	constexpr std::array settings_list = {
-		"Enable Fast Math mode            -          Apply algebraic simplifications using unsafe math optimizations (disregarding IEEE 754)."
+		"Enable Fast Math mode       -       Apply algebraic simplifications using unsafe math optimizations (disregarding IEEE 754)     -     -f, --fast-math."
 	};
 	for (const auto& i : settings_list) {
 		std::println("{}", i);
