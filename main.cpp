@@ -594,143 +594,6 @@ private:
 
 
 
-class ExpressionConverter {
-public:
-	explicit ExpressionConverter(const ParserResult& ast)
-		: ast(ast.value())
-		, index_field(this->ast.child_start.size() - 1)
-	{
-
-	}
-
-	void expr_convert() {
-		to_latex_and_unicode_text();
-		Console::print_to_center(latex_text_field, 0);
-		Console::print_to_center(unicode_text_field, 0);
-	}
-private:
-	[[nodiscard]] std::string get_unicode_power_exponent(std::string_view exponent) const {
-		std::string exponent_expr;
-		for (int i = 0; i < exponent.size(); ++i) {
-			switch (exponent[i]) {
-			case '0': exponent_expr += "⁰"; break;
-			case '1': exponent_expr += "¹"; break;
-			case '2': exponent_expr += "²"; break;
-			case '3': exponent_expr += "³"; break;
-			case '4': exponent_expr += "⁴"; break;
-			case '5': exponent_expr += "⁵"; break;
-			case '6': exponent_expr += "⁶"; break;
-			case '7': exponent_expr += "⁷"; break;
-			case '8': exponent_expr += "⁸"; break;
-			case '9': exponent_expr += "⁹"; break;
-			}
-		}
-		return exponent_expr;
-	}
-
-	void expr_converter(int32_t index, std::vector<std::string>& latex_text, std::vector<std::string>& unicode_text) {
-		index_field = index;
-		if (ast.child_start[index_field] == -1) {
-			if (parent_is_power) {
-				unicode_text.push_back(get_unicode_power_exponent(ast.node_data[index_field]));
-			}
-			else {
-				unicode_text.emplace_back(ast.node_data[index_field]);
-			}
-			latex_text.emplace_back(ast.node_data[index_field]);
-			return;
-		}
-
-		// Note: The SoA AST is built using post-order traversal, meaning the root node 
-		// is located at the end of the vector. Thus, nodes are processed in reverse 
-		// order (from end to start), causing the text to be assembled backwards. 
-		// The resulting string must be flipped using std::reverse inside to_latex_and_unicode_text().
-		switch (ast.node_types[index_field]) {
-		case NodeType::Addition:
-			expr_converter(--index_field, latex_text, unicode_text);
-			latex_text.push_back(" + ");
-			unicode_text.push_back(parent_is_power ? "⁺" : " + ");
-			expr_converter(--index_field, latex_text, unicode_text);
-			break;
-		case NodeType::Subtraction:
-			expr_converter(--index_field, latex_text, unicode_text);
-			latex_text.push_back(" − ");
-			unicode_text.push_back(parent_is_power ? "⁻" : " − ");
-			expr_converter(--index_field, latex_text, unicode_text);
-			break;
-		case NodeType::Multiplication:
-			expr_converter(--index_field, latex_text, unicode_text);
-			latex_text.push_back(" \\cdot ");
-			unicode_text.push_back(" ⋅ ");
-			expr_converter(--index_field, latex_text, unicode_text);
-			break;
-		case NodeType::Division:
-			latex_text.push_back("}");
-			expr_converter(--index_field, latex_text, unicode_text);
-			latex_text.push_back("}{");
-			unicode_text.push_back(" / ");
-			expr_converter(--index_field, latex_text, unicode_text);
-			latex_text.push_back("\\frac{");
-			break;
-		case NodeType::Negation:
-			expr_converter(--index_field, latex_text, unicode_text);
-			latex_text.push_back("−");
-			unicode_text.push_back("−");
-			break;
-		case NodeType::Percent:
-			latex_text.push_back("\\,\\%");
-			unicode_text.push_back("%");
-			expr_converter(--index_field, latex_text, unicode_text);
-			break;
-		case NodeType::Power:
-			latex_text.push_back("}");
-			parent_is_power = true;
-			expr_converter(--index_field, latex_text, unicode_text);
-			parent_is_power = false;
-			latex_text.push_back("^{");
-			expr_converter(--index_field, latex_text, unicode_text);
-			break;
-		}
-	}
-	void to_latex_and_unicode_text() {
-		std::vector<std::string> latex_text_syntax;
-		std::vector<std::string> unicode_text;
-
-		latex_text_syntax.reserve(ast.node_data.size());
-		unicode_text.reserve(ast.node_data.size());
-
-		expr_converter(ast.child_start.size() - 1, latex_text_syntax, unicode_text);
-
-		// Restore the correct character sequence for the backwards-built AST string.
-		std::reverse(latex_text_syntax.begin(), latex_text_syntax.end());
-		std::reverse(unicode_text.begin(), unicode_text.end());
-
-		std::string latex_text_string;
-		latex_text_string.reserve(latex_text_syntax.size());
-		for (int i = 0; i < latex_text_syntax.size(); ++i) {
-			latex_text_string += latex_text_syntax[i];
-		}
-
-		std::string unicode_text_string;
-		unicode_text_string.reserve(unicode_text.size());
-		for (int i = 0; i < unicode_text.size(); ++i) {
-			unicode_text_string += unicode_text[i];
-		}
-
-		latex_text_field = latex_text_string;
-		unicode_text_field = unicode_text_string;
-	}
-
-	AbstractSyntaxTree_SoA ast;
-	int32_t index_field;
-	std::string latex_text_field;
-	std::string unicode_text_field;
-
-	bool parent_is_power = false;
-};
-
-
-
 enum class OpCode {
 	ldc,
 	add,
@@ -1208,25 +1071,17 @@ int main(int argc, char* argv[])
 
 				return parser.parse();
 			})
-			.transform([](const AbstractSyntaxTree_SoA& soa_ast) {
+			.and_then([current_settings](const AbstractSyntaxTree_SoA& soa_ast) {
 				std::println("\033[32m Math expression is valid!\033[0m");
 
-				Console::print_to_center("3. LATEX- AND UNICODE TEXT.\n", 0);
-				ExpressionConverter converter(soa_ast);
-				converter.expr_convert();
-				std::println();
-
-				return soa_ast;
-			})
-			.and_then([current_settings](const AbstractSyntaxTree_SoA& soa_ast) {
-				Console::print_to_center("4. IR GENERATION.\n", 0);
+				Console::print_to_center("3. IR GENERATION.\n", 0);
 
 				IRGenerator ir_generator(soa_ast);
 				std::vector<IRInstruction> instructions = ir_generator.generate();
 				ir_generator.print(instructions);
 				std::println();
 
-				Console::print_to_center("5. IR OPTIMIZATION.\n", 0);
+				Console::print_to_center("4. IR OPTIMIZATION.\n", 0);
 				IROptimizer ir_optimizer(std::move(instructions), std::move(ir_generator.get_operands_pool()), current_settings);
 				auto optimized_ir = ir_optimizer.optimize();
 				ir_generator.print(std::move(optimized_ir).value_or(std::vector<IRInstruction>{}));
@@ -1246,11 +1101,11 @@ int main(int argc, char* argv[])
 
 		if (!program_pipeline.has_value()) continue;
 
-		Console::print_to_center("6 EVALUATE IN GPU.\n", 0);
+		Console::print_to_center("5 EVALUATE IN GPU.\n", 0);
 		CudaEvaluator evaluator;
 		double result = evaluator.evaluate(std::to_string(program_pipeline.value()));
 
-		Console::print_to_center("\033[32m 7. RESULT: ", 0);
+		Console::print_to_center("\033[32m 6. RESULT: ", 0);
 		Console::print_to_center(std::string(std::format("{}\033[0m\n", result)), 0);
 	}
 
