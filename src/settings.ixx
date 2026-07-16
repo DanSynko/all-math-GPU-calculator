@@ -1,5 +1,5 @@
 module;
-#include "include/CLI11.hpp";
+#include "third-party/CLI11.hpp";
 
 export module settings;
 

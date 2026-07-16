@@ -1,5 +1,5 @@
 export module ir_generator;
-#include "include/magic_enum-master/include/magic_enum/magic_enum.hpp"
+#include "third-party/magic_enum.hpp"
 
 #ifdef __INTELLISENSE__
 #include <vector>

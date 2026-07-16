@@ -20,7 +20,7 @@ target_link_libraries(all_math_GPU_calculator
         CUDA::cuda_driver
 )
 
-target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(all_math_GPU_calculator PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 target_sources(all_math_GPU_calculator
     PRIVATE

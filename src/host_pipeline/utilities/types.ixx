@@ -1,5 +1,5 @@
 module;
-#include "include/magic_enum-master/include/magic_enum/magic_enum.hpp"
+#include "third-party/magic_enum.hpp"
 
 export module types;
 
