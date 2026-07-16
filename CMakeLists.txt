@@ -11,7 +11,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(CUDAToolkit REQUIRED)
 
-add_executable(all_math_GPU_calculator main.cpp)
+add_executable(all_math_GPU_calculator src/main.cpp)
 
 
 target_link_libraries(all_math_GPU_calculator
@@ -25,32 +25,32 @@ target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_sources(all_math_GPU_calculator
     PRIVATE
         FILE_SET CXX_MODULES FILES
-            cuda_backend/cuda_evaluator.ixx
-            cuda_backend/details/cuda_kernel_generator.ixx
-            cuda_backend/details/cuda_nvrtc_compiler.ixx 
-            cuda_backend/details/cuda_driver_executor.ixx
+            src/cuda_backend/cuda_evaluator.ixx
+            src/cuda_backend/details/cuda_kernel_generator.ixx
+            src/cuda_backend/details/cuda_nvrtc_compiler.ixx 
+            src/cuda_backend/details/cuda_driver_executor.ixx
 )
 target_sources(all_math_GPU_calculator
     PRIVATE
         FILE_SET CXX_MODULES FILES
-            host_pipeline/lexer.ixx
-            host_pipeline/pratt_parser.ixx
-            host_pipeline/ir_core/ir_generator.ixx
-            host_pipeline/ir_core/ir_optimizer.ixx
+            src/host_pipeline/lexer.ixx
+            src/host_pipeline/pratt_parser.ixx
+            src/host_pipeline/ir_core/ir_generator.ixx
+            src/host_pipeline/ir_core/ir_optimizer.ixx
 )
 target_sources(all_math_GPU_calculator
     PRIVATE
         FILE_SET CXX_MODULES FILES
-            host_pipeline/utilities/error_handler.ixx
-            host_pipeline/utilities/lookup_table.ixx
-            host_pipeline/utilities/types.ixx 
+            src/host_pipeline/utilities/error_handler.ixx
+            src/host_pipeline/utilities/lookup_table.ixx
+            src/host_pipeline/utilities/types.ixx 
 )
 target_sources(all_math_GPU_calculator
     PRIVATE
         FILE_SET CXX_MODULES FILES
-            settings.ixx            
-            console_print.ixx
-            program_interactive_commands/help.ixx 
+            src/settings.ixx            
+            src/console_print.ixx
+            src/program_interactive_commands/help.ixx 
 )
 
 if(MSVC)
